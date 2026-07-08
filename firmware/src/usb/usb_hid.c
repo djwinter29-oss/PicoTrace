@@ -20,9 +20,9 @@
 /** @brief Total payload bytes returned for the compact I2C all-status response. */
 #define USB_HID_I2C_MONITOR_ALL_STATUS_PAYLOAD_BYTES (I2C_MONITOR_CHANNEL_COUNT * USB_HID_I2C_MONITOR_ALL_STATUS_CHANNEL_BYTES)
 /** @brief Payload bytes required for the SPI set-config request. */
-#define USB_HID_SPI_MONITOR_SET_PAYLOAD_BYTES 7u
-/** @brief Payload bytes returned for one SPI channel status snapshot. */
-#define USB_HID_SPI_MONITOR_STATUS_PAYLOAD_BYTES 17u
+#define USB_HID_SPI_MONITOR_SET_PAYLOAD_BYTES 8u
+/** @brief Payload bytes returned for one SPI bus status snapshot. */
+#define USB_HID_SPI_MONITOR_STATUS_PAYLOAD_BYTES 18u
 /** @brief Bytes used per channel in the compact SPI all-status response. */
 #define USB_HID_SPI_MONITOR_ALL_STATUS_CHANNEL_BYTES 10u
 /** @brief Total payload bytes returned for the compact SPI all-status response. */
@@ -125,7 +125,7 @@ static bool usb_hid_handle_i2c_monitor_get_all_status(usb_hid_command_t *respons
 
 /** @brief Apply one SPI monitor set-config HID request. */
 static bool usb_hid_handle_spi_monitor_set_config(usb_hid_command_t *response, const usb_hid_command_t *request) {
-    spi_monitor_channel_config_t config;
+    spi_monitor_bus_config_t config;
     spi_monitor_rc_t result;
 
     if (request->payload_length < USB_HID_SPI_MONITOR_SET_PAYLOAD_BYTES) {
@@ -135,8 +135,9 @@ static bool usb_hid_handle_spi_monitor_set_config(usb_hid_command_t *response, c
 
     config.capture = (spi_monitor_capture_t)request->payload[1];
     config.spi_mode = request->payload[2];
-    config.timeout_us = usb_hid_read_u32_le(&request->payload[3]);
-    result = spi_monitor_control_set_channel_config(request->payload[0], &config);
+    config.channel_select_mask = request->payload[3];
+    config.timeout_us = usb_hid_read_u32_le(&request->payload[4]);
+    result = spi_monitor_control_set_bus_config(request->payload[0], &config);
     if (result != SPI_MONITOR_RC_OK) {
         if (result == SPI_MONITOR_RC_BUSY) {
             response->status = USB_HID_STATUS_BUSY;
@@ -149,18 +150,17 @@ static bool usb_hid_handle_spi_monitor_set_config(usb_hid_command_t *response, c
     return true;
 }
 
-/** @brief Encode one SPI monitor status snapshot into a HID response payload. */
+/** @brief Encode one SPI monitor bus status snapshot into a HID response payload. */
 static bool usb_hid_handle_spi_monitor_get_status(usb_hid_command_t *response, const usb_hid_command_t *request) {
-    spi_monitor_channel_status_t status;
+    spi_monitor_bus_status_t status;
 
     if (request->payload_length < 1u) {
         response->status = USB_HID_STATUS_BAD_LENGTH;
         return false;
     }
 
-    if (spi_monitor_control_get_channel_status(request->payload[0], &status) != SPI_MONITOR_RC_OK) {
+    if (spi_monitor_control_get_bus_status(request->payload[0], &status) != SPI_MONITOR_RC_OK) {
         response->status = USB_HID_STATUS_REJECTED;
-    /** @brief Encode all SPI monitor status snapshots into a compact HID response payload. */
         return false;
     }
 
@@ -170,9 +170,10 @@ static bool usb_hid_handle_spi_monitor_get_status(usb_hid_command_t *response, c
     response->payload[2] = status.running ? 1u : 0u;
     response->payload[3] = (uint8_t)status.capture;
     response->payload[4] = status.spi_mode;
-    usb_hid_write_u32_le(&response->payload[5], status.timeout_us);
-    usb_hid_write_u32_le(&response->payload[9], status.packets_emitted);
-    usb_hid_write_u32_le(&response->payload[13], status.overrun_count);
+    response->payload[5] = status.channel_select_mask;
+    usb_hid_write_u32_le(&response->payload[6], status.timeout_us);
+    usb_hid_write_u32_le(&response->payload[10], status.packets_emitted);
+    usb_hid_write_u32_le(&response->payload[14], status.overrun_count);
     return true;
 }
 

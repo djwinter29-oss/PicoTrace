@@ -30,7 +30,7 @@ channel.
 
 ## Control Model
 
-Each logical SPI channel should support three monitor states:
+Each observed SPI bus should support three monitor states:
 
 - stopped
 - MOSI-only monitoring
@@ -46,6 +46,15 @@ Each start request must also select one of the four standard SPI modes:
 Changing monitoring mode, lane selection, or SPI mode should use the same destructive stop-first
 restart policy already used by the I2C monitor. Any in-flight raw samples, partial packet state,
 or pending transaction bytes for that running session may be discarded at reconfiguration time.
+
+The control boundary is per observed SPI bus, not per logical channel. Each start request must
+also choose which observed `CS_N` slots on that bus are eligible for capture:
+
+- one specific channel on that bus
+- all three observed channels on that bus
+
+This prevents a floating or unconnected active-low `CS_N` input from permanently looking selected
+and contaminating packet ownership for unrelated traffic on the same bus.
 
 ## Hardware Mapping Assumption
 

@@ -16,8 +16,8 @@ typedef enum {
 	USB_HID_OPCODE_I2C_MONITOR_SET_RATE = 4u, /**< Start, stop, or retune one I2C monitor channel. */
 	USB_HID_OPCODE_I2C_MONITOR_GET_STATUS = 5u, /**< Read one I2C monitor channel status snapshot. */
 	USB_HID_OPCODE_I2C_MONITOR_GET_ALL_STATUS = 6u, /**< Read all I2C monitor channel status snapshots. */
-	USB_HID_OPCODE_SPI_MONITOR_SET_CONFIG = 7u, /**< Start, stop, or reconfigure one SPI monitor channel. */
-	USB_HID_OPCODE_SPI_MONITOR_GET_STATUS = 8u, /**< Read one SPI monitor channel status snapshot. */
+	USB_HID_OPCODE_SPI_MONITOR_SET_CONFIG = 7u, /**< Start, stop, or reconfigure one observed SPI bus. */
+	USB_HID_OPCODE_SPI_MONITOR_GET_STATUS = 8u, /**< Read one observed SPI bus status snapshot. */
 	USB_HID_OPCODE_SPI_MONITOR_GET_ALL_STATUS = 9u, /**< Read all SPI monitor channel status snapshots. */
 	USB_HID_OPCODE_LED_ON = 0x80u, /**< Turn the board status LED on. */
 	USB_HID_OPCODE_LED_OFF = 0x81u, /**< Turn the board status LED off. */

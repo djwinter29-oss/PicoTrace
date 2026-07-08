@@ -20,19 +20,35 @@ typedef enum {
     SPI_MONITOR_RC_FAILED = 4u,
 } spi_monitor_rc_t;
 
-/** @brief Capture lane selection requested for one logical SPI channel. */
+/** @brief Capture lane selection requested for one observed SPI bus. */
 typedef enum {
     SPI_MONITOR_CAPTURE_DISABLED = 0u,
     SPI_MONITOR_CAPTURE_MOSI = 1u,
     SPI_MONITOR_CAPTURE_MOSI_MISO = 2u,
 } spi_monitor_capture_t;
 
-/** @brief Requested runtime configuration for one logical SPI channel. */
+/** @brief Select all observed chip-select slots on one SPI bus. */
+#define SPI_MONITOR_CHANNEL_SELECT_ALL ((uint8_t)((1u << SPI_MONITOR_CS_SLOTS_PER_BUS) - 1u))
+
+/** @brief Requested runtime configuration for one observed SPI bus. */
 typedef struct {
     spi_monitor_capture_t capture; /**< Disabled, MOSI-only, or MOSI+MISO capture. */
     uint8_t spi_mode; /**< SPI mode `0` through `3`. */
+    uint8_t channel_select_mask; /**< Bit mask of selected `CS_N` slots on this bus, or @ref SPI_MONITOR_CHANNEL_SELECT_ALL. */
     uint32_t timeout_us; /**< Inter-byte timeout in microseconds, or `0` for the default. */
-} spi_monitor_channel_config_t;
+} spi_monitor_bus_config_t;
+
+/** @brief Snapshot of one observed SPI bus control state. */
+typedef struct {
+    bool initialized; /**< Indicates whether the shared SPI monitor resources initialized successfully. */
+    bool running; /**< Indicates whether capture is currently active for this observed SPI bus. */
+    spi_monitor_capture_t capture; /**< Active lane selection for this observed SPI bus. */
+    uint8_t spi_mode; /**< Active SPI mode `0` through `3`. */
+    uint8_t channel_select_mask; /**< Bit mask of selected `CS_N` slots on this bus. */
+    uint32_t timeout_us; /**< Active inter-byte timeout in microseconds. */
+    uint32_t packets_emitted; /**< Number of emitted trace packet fragments in the current session. */
+    uint32_t overrun_count; /**< Number of dropped completed fragments in the current session. */
+} spi_monitor_bus_status_t;
 
 /** @brief Snapshot of one logical SPI monitor channel. */
 typedef struct {
@@ -48,8 +64,8 @@ typedef struct {
 /**
  * @brief Initialize the shared SPI monitor scaffold.
  *
- * This installs the SPI PIO programs and leaves all logical channels stopped until the producer
- * core applies a non-disabled channel configuration.
+ * This installs the SPI PIO programs and leaves all observed SPI buses stopped until the producer
+ * core applies a non-disabled bus configuration.
  *
  * @return Control result describing whether setup succeeded or failed.
  */
@@ -64,24 +80,24 @@ spi_monitor_rc_t spi_monitor_init(void);
 void spi_monitor_poll(void);
 
 /**
- * @brief Start, stop, or reconfigure one logical SPI channel.
- * @param channel Zero-based SPI logical channel index.
+ * @brief Start, stop, or reconfigure one observed SPI bus.
+ * @param bus Zero-based observed SPI bus index.
  * @param config Caller-owned capture configuration.
  * @return Control result describing whether the request was applied or rejected.
  *
- * Passing @ref SPI_MONITOR_CAPTURE_DISABLED stops the logical channel and clears its session
- * counters. Passing a new active configuration restarts the logical channel with fresh session
- * state.
+ * Passing @ref SPI_MONITOR_CAPTURE_DISABLED stops the whole observed SPI bus and clears the session
+ * counters of all logical channels that belong to it. Passing a new active configuration restarts
+ * the bus with fresh session state for every logical channel on that bus.
  */
-spi_monitor_rc_t spi_monitor_set_channel_config(uint32_t channel, const spi_monitor_channel_config_t *config);
+spi_monitor_rc_t spi_monitor_set_bus_config(uint32_t bus, const spi_monitor_bus_config_t *config);
 
 /**
- * @brief Read the current state of one logical SPI channel.
- * @param channel Zero-based SPI logical channel index.
+ * @brief Read the current control state of one observed SPI bus.
+ * @param bus Zero-based observed SPI bus index.
  * @param status_out Caller-owned destination for the status snapshot.
  * @return Control result describing whether the snapshot was returned or the request was invalid.
  */
-spi_monitor_rc_t spi_monitor_get_channel_status(uint32_t channel, spi_monitor_channel_status_t *status_out);
+spi_monitor_rc_t spi_monitor_get_bus_status(uint32_t bus, spi_monitor_bus_status_t *status_out);
 
 /**
  * @brief Read a coherent snapshot for every logical SPI channel in one producer-core-owned operation.

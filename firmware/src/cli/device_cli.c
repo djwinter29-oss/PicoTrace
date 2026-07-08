@@ -35,7 +35,7 @@ static const cli_shell_command_t device_cli_commands[] = {
     {"led", "led on|off", device_cli_led},
     {"stream", "stream on|off", device_cli_stream},
     {"reboot", "reboot", device_cli_reboot},
-    {"spimon", "spimon <ch> off|mosi|both|status", device_cli_spimon},
+    {"spimon", "spimon <bus> off|mosi|both|status", device_cli_spimon},
 };
 
 /**
@@ -94,16 +94,33 @@ static const char *device_cli_spi_capture_name(spi_monitor_capture_t capture) {
     }
 }
 
-/** @brief Format one SPI monitor status line for the CLI. */
-static bool device_cli_write_spimon_status(uint32_t channel, const spi_monitor_channel_status_t *status) {
-    char line[112];
+/** @brief Map the selected `CS_N` mask to a CLI-visible token. */
+static const char *device_cli_spi_channel_select_name(uint8_t channel_select_mask) {
+    switch (channel_select_mask) {
+        case 0x01u:
+            return "ch0";
+        case 0x02u:
+            return "ch1";
+        case 0x04u:
+            return "ch2";
+        case SPI_MONITOR_CHANNEL_SELECT_ALL:
+            return "all";
+        default:
+            return "mixed";
+    }
+}
+
+/** @brief Format one SPI monitor bus status line for the CLI. */
+static bool device_cli_write_spimon_status(uint32_t bus, const spi_monitor_bus_status_t *status) {
+    char line[128];
 
     snprintf(
         line,
         sizeof(line),
-        "spimon ch%lu %s capture=%s mode=%u timeout_us=%lu packets=%lu overruns=%lu",
-        (unsigned long)channel,
+        "spimon bus%lu %s select=%s capture=%s mode=%u timeout_us=%lu packets=%lu overruns=%lu",
+        (unsigned long)bus,
         status->running ? "running" : "stopped",
+        device_cli_spi_channel_select_name(status->channel_select_mask),
         device_cli_spi_capture_name(status->capture),
         (unsigned int)status->spi_mode,
         (unsigned long)status->timeout_us,
@@ -172,25 +189,26 @@ static bool device_cli_i2cmon(int argc, const char *const *argv) {
 
 /** @copydoc device_cli_spimon */
 static bool device_cli_spimon(int argc, const char *const *argv) {
-    spi_monitor_channel_status_t status;
-    spi_monitor_channel_config_t config;
+    spi_monitor_bus_status_t status;
+    spi_monitor_bus_config_t config;
     spi_monitor_rc_t result;
-    uint32_t channel;
+    uint32_t bus;
+    uint32_t channel_slot;
     uint32_t spi_mode;
     uint32_t timeout_us = 0u;
 
-    if ((argc == 3) && (strcmp(argv[1], "status") == 0) && device_cli_parse_u32(argv[2], &channel)) {
-        if (spi_monitor_control_get_channel_status(channel, &status) != SPI_MONITOR_RC_OK) {
+    if ((argc == 3) && (strcmp(argv[1], "status") == 0) && device_cli_parse_u32(argv[2], &bus)) {
+        if (spi_monitor_control_get_bus_status(bus, &status) != SPI_MONITOR_RC_OK) {
             return cli_shell_write_line("spimon status failed");
         }
 
-        return device_cli_write_spimon_status(channel, &status);
+        return device_cli_write_spimon_status(bus, &status);
     }
 
-    if ((argc == 3) && device_cli_parse_u32(argv[1], &channel) && (strcmp(argv[2], "off") == 0)) {
+    if ((argc == 3) && device_cli_parse_u32(argv[1], &bus) && (strcmp(argv[2], "off") == 0)) {
         memset(&config, 0, sizeof(config));
         config.capture = SPI_MONITOR_CAPTURE_DISABLED;
-        result = spi_monitor_control_set_channel_config(channel, &config);
+        result = spi_monitor_control_set_bus_config(bus, &config);
         if (result != SPI_MONITOR_RC_OK) {
             if (result == SPI_MONITOR_RC_BUSY) {
                 return cli_shell_write_line("spimon busy");
@@ -201,30 +219,38 @@ static bool device_cli_spimon(int argc, const char *const *argv) {
             return cli_shell_write_line("spimon apply failed");
         }
 
-        if (spi_monitor_control_get_channel_status(channel, &status) != SPI_MONITOR_RC_OK) {
+        if (spi_monitor_control_get_bus_status(bus, &status) != SPI_MONITOR_RC_OK) {
             return cli_shell_write_line("spimon status failed");
         }
 
-        return device_cli_write_spimon_status(channel, &status);
+        return device_cli_write_spimon_status(bus, &status);
     }
 
-    if ((argc == 4 || argc == 5) && device_cli_parse_u32(argv[1], &channel) && device_cli_parse_u32(argv[3], &spi_mode)) {
+    if ((argc == 5 || argc == 6) && device_cli_parse_u32(argv[1], &bus) && device_cli_parse_u32(argv[4], &spi_mode)) {
         memset(&config, 0, sizeof(config));
         if (strcmp(argv[2], "mosi") == 0) {
             config.capture = SPI_MONITOR_CAPTURE_MOSI;
         } else if (strcmp(argv[2], "both") == 0) {
             config.capture = SPI_MONITOR_CAPTURE_MOSI_MISO;
         } else {
-            return cli_shell_write_line("Usage: spimon <channel> off|mosi <mode> [timeout_us]|both <mode> [timeout_us]|status <channel>");
+            return cli_shell_write_line("Usage: spimon <bus> off|mosi <all|channel> <mode> [timeout_us]|both <all|channel> <mode> [timeout_us]|status <bus>");
         }
 
-        if ((argc == 5) && !device_cli_parse_u32(argv[4], &timeout_us)) {
-            return cli_shell_write_line("Usage: spimon <channel> off|mosi <mode> [timeout_us]|both <mode> [timeout_us]|status <channel>");
+        if (strcmp(argv[3], "all") == 0) {
+            config.channel_select_mask = SPI_MONITOR_CHANNEL_SELECT_ALL;
+        } else if (device_cli_parse_u32(argv[3], &channel_slot) && (channel_slot < SPI_MONITOR_CS_SLOTS_PER_BUS)) {
+            config.channel_select_mask = (uint8_t)(1u << channel_slot);
+        } else {
+            return cli_shell_write_line("Usage: spimon <bus> off|mosi <all|channel> <mode> [timeout_us]|both <all|channel> <mode> [timeout_us]|status <bus>");
+        }
+
+        if ((argc == 6) && !device_cli_parse_u32(argv[5], &timeout_us)) {
+            return cli_shell_write_line("Usage: spimon <bus> off|mosi <all|channel> <mode> [timeout_us]|both <all|channel> <mode> [timeout_us]|status <bus>");
         }
 
         config.spi_mode = (uint8_t)spi_mode;
         config.timeout_us = timeout_us;
-        result = spi_monitor_control_set_channel_config(channel, &config);
+        result = spi_monitor_control_set_bus_config(bus, &config);
         if (result != SPI_MONITOR_RC_OK) {
             if (result == SPI_MONITOR_RC_BUSY) {
                 return cli_shell_write_line("spimon busy");
@@ -235,14 +261,14 @@ static bool device_cli_spimon(int argc, const char *const *argv) {
             return cli_shell_write_line("spimon apply failed");
         }
 
-        if (spi_monitor_control_get_channel_status(channel, &status) != SPI_MONITOR_RC_OK) {
+        if (spi_monitor_control_get_bus_status(bus, &status) != SPI_MONITOR_RC_OK) {
             return cli_shell_write_line("spimon status failed");
         }
 
-        return device_cli_write_spimon_status(channel, &status);
+        return device_cli_write_spimon_status(bus, &status);
     }
 
-    return cli_shell_write_line("Usage: spimon <channel> off|mosi <mode> [timeout_us]|both <mode> [timeout_us]|status <channel>");
+    return cli_shell_write_line("Usage: spimon <bus> off|mosi <all|channel> <mode> [timeout_us]|both <all|channel> <mode> [timeout_us]|status <bus>");
 }
 
 /** @copydoc device_cli_led */

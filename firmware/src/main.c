@@ -59,8 +59,8 @@ static void trace_producer_core1_main(void) {
         i2c_monitor_get_all_status
     );
     spi_monitor_control_bind_executor(
-        spi_monitor_set_channel_config,
-        spi_monitor_get_channel_status,
+        spi_monitor_set_bus_config,
+        spi_monitor_get_bus_status,
         spi_monitor_get_all_status
     );
 

@@ -11,15 +11,15 @@
 
 #include "trace/capture/spi_monitor.h"
 
-/** @brief Producer-core executor signature for SPI monitor configuration changes. */
-typedef spi_monitor_rc_t (*spi_monitor_control_set_channel_fn)(
-    uint32_t channel,
-    const spi_monitor_channel_config_t *config
+/** @brief Producer-core executor signature for SPI monitor bus configuration changes. */
+typedef spi_monitor_rc_t (*spi_monitor_control_set_bus_fn)(
+    uint32_t bus,
+    const spi_monitor_bus_config_t *config
 );
-/** @brief Producer-core executor signature for one SPI monitor status read. */
-typedef spi_monitor_rc_t (*spi_monitor_control_get_status_fn)(
-    uint32_t channel,
-    spi_monitor_channel_status_t *status_out
+/** @brief Producer-core executor signature for one SPI monitor bus status read. */
+typedef spi_monitor_rc_t (*spi_monitor_control_get_bus_status_fn)(
+    uint32_t bus,
+    spi_monitor_bus_status_t *status_out
 );
 /** @brief Producer-core executor signature for an all-channel SPI monitor status read. */
 typedef spi_monitor_rc_t (*spi_monitor_control_get_all_status_fn)(spi_monitor_channel_status_t *status_out);
@@ -29,13 +29,13 @@ void spi_monitor_control_init(void);
 
 /**
  * @brief Bind producer-core SPI monitor executors to the control bridge.
- * @param set_channel_fn Executor used for configuration changes.
- * @param get_status_fn Executor used for single-channel status reads.
+ * @param set_bus_fn Executor used for configuration changes.
+ * @param get_bus_status_fn Executor used for single-bus status reads.
  * @param get_all_status_fn Executor used for all-channel status reads.
  */
 void spi_monitor_control_bind_executor(
-    spi_monitor_control_set_channel_fn set_channel_fn,
-    spi_monitor_control_get_status_fn get_status_fn,
+    spi_monitor_control_set_bus_fn set_bus_fn,
+    spi_monitor_control_get_bus_status_fn get_bus_status_fn,
     spi_monitor_control_get_all_status_fn get_all_status_fn
 );
 
@@ -46,20 +46,20 @@ void spi_monitor_control_bind_executor(
 void spi_monitor_control_set_inline_mode(bool enabled);
 
 /**
- * @brief Queue a logical SPI channel configuration change onto the producer core.
- * @param channel Zero-based SPI logical channel index.
- * @param config Caller-owned channel configuration.
+ * @brief Queue an observed SPI bus configuration change onto the producer core.
+ * @param bus Zero-based observed SPI bus index.
+ * @param config Caller-owned bus configuration.
  * @return Control result describing whether the request was applied or rejected.
  */
-spi_monitor_rc_t spi_monitor_control_set_channel_config(uint32_t channel, const spi_monitor_channel_config_t *config);
+spi_monitor_rc_t spi_monitor_control_set_bus_config(uint32_t bus, const spi_monitor_bus_config_t *config);
 
 /**
- * @brief Queue a single-channel SPI monitor status read onto the producer core.
- * @param channel Zero-based SPI logical channel index.
+ * @brief Queue a single-bus SPI monitor status read onto the producer core.
+ * @param bus Zero-based observed SPI bus index.
  * @param status_out Caller-owned destination for the status snapshot.
  * @return Control result describing whether the snapshot was returned or the request was invalid.
  */
-spi_monitor_rc_t spi_monitor_control_get_channel_status(uint32_t channel, spi_monitor_channel_status_t *status_out);
+spi_monitor_rc_t spi_monitor_control_get_bus_status(uint32_t bus, spi_monitor_bus_status_t *status_out);
 
 /**
  * @brief Queue an all-channel SPI monitor status read onto the producer core.
