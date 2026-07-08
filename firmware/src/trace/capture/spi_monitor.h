@@ -106,4 +106,15 @@ spi_monitor_rc_t spi_monitor_get_bus_status(uint32_t bus, spi_monitor_bus_status
  */
 spi_monitor_rc_t spi_monitor_get_all_status(spi_monitor_channel_status_t *status_out);
 
+#if defined(SPI_MONITOR_TEST_HOOKS)
+bool spi_monitor_test_feed_samples(
+    uint32_t bus,
+    uint8_t active_cs_mask,
+    uint32_t timestamp_us,
+    const uint32_t *raw_words,
+    uint32_t raw_word_count
+);
+void spi_monitor_test_poll_timeout(uint32_t bus, uint32_t timestamp_us);
+#endif
+
 #endif

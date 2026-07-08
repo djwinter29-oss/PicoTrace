@@ -395,6 +395,29 @@ static void reset_real_spi_monitor_state(void) {
     }
 }
 
+static uint32_t pack_spi_sample_word(const uint8_t *samples, uint32_t sample_count) {
+    uint32_t word = 0u;
+
+    for (uint32_t sample = 0u; sample < sample_count; ++sample) {
+        word |= ((uint32_t)(samples[sample] & 0x07u)) << (21u - (sample * 3u));
+    }
+
+    return word;
+}
+
+static uint32_t pack_spi_byte_word(uint8_t mosi_byte, uint8_t miso_byte) {
+    uint8_t samples[8];
+
+    for (uint32_t bit = 0u; bit < 8u; ++bit) {
+        uint8_t mosi = (uint8_t)((mosi_byte >> (7u - bit)) & 0x01u);
+        uint8_t miso = (uint8_t)((miso_byte >> (7u - bit)) & 0x01u);
+
+        samples[bit] = (uint8_t)((mosi << 1u) | (miso << 2u));
+    }
+
+    return pack_spi_sample_word(samples, 8u);
+}
+
 static void test_cli_unknown_command_writes_fixed_helper(void) {
     static const uint8_t payload[] = {'b', 'a', 'd', '\r'};
 
@@ -514,6 +537,69 @@ static void test_spi_monitor_bus_config_rejects_empty_channel_selection(void) {
     config.channel_select_mask = 0u;
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_INVALID);
+}
+
+static void test_spi_monitor_emits_mosi_miso_trace_packet(void) {
+    spi_monitor_bus_config_t config = {0};
+    spi_monitor_channel_status_t status[SPI_MONITOR_CHANNEL_COUNT];
+    trace_packet_t packet = {0};
+    uint32_t raw_words[1];
+
+    reset_real_spi_monitor_state();
+    trace_ring_init();
+    config.capture = SPI_MONITOR_CAPTURE_MOSI_MISO;
+    config.spi_mode = 0u;
+    config.channel_select_mask = 0x02u;
+    config.timeout_us = 1000u;
+    raw_words[0] = pack_spi_byte_word(0xA5u, 0x3Cu);
+
+    assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
+    assert(spi_monitor_test_feed_samples(0u, 0x02u, 100u, raw_words, 1u) == true);
+    assert(trace_ring_available() == 0u);
+
+    spi_monitor_test_poll_timeout(0u, 1200u);
+
+    assert(trace_ring_available() == 1u);
+    assert(trace_ring_pop_copy(&packet) == true);
+    assert(packet.header.version == TRACE_PACKET_VERSION);
+    assert(packet.header.type == TRACE_TYPE_SPI);
+    assert(packet.header.channel == SPI_MONITOR_CH1_LOGICAL_CHANNEL);
+    assert((packet.header.flags & TRACE_FLAG_END) != 0u);
+    assert(packet.header.payload_len == 2u);
+    assert(packet.header.meta == SPI_MONITOR_CAPTURE_MOSI_MISO);
+    assert(packet.header.timestamp_us == 100u);
+    assert(packet.payload[0] == 0xA5u);
+    assert(packet.payload[1] == 0x3Cu);
+    assert(spi_monitor_get_all_status(status) == SPI_MONITOR_RC_OK);
+    assert(status[1].packets_emitted == 1u);
+}
+
+static void test_spi_monitor_emits_mosi_only_trace_packet(void) {
+    spi_monitor_bus_config_t config = {0};
+    trace_packet_t packet = {0};
+    uint32_t raw_words[1];
+
+    reset_real_spi_monitor_state();
+    trace_ring_init();
+    config.capture = SPI_MONITOR_CAPTURE_MOSI;
+    config.spi_mode = 1u;
+    config.channel_select_mask = 0x04u;
+    config.timeout_us = 800u;
+    raw_words[0] = pack_spi_byte_word(0x5Au, 0xC3u);
+
+    assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
+    assert(spi_monitor_test_feed_samples(0u, 0x04u, 50u, raw_words, 1u) == true);
+
+    spi_monitor_test_poll_timeout(0u, 900u);
+
+    assert(trace_ring_available() == 1u);
+    assert(trace_ring_pop_copy(&packet) == true);
+    assert(packet.header.type == TRACE_TYPE_SPI);
+    assert(packet.header.channel == SPI_MONITOR_CH2_LOGICAL_CHANNEL);
+    assert((packet.header.flags & TRACE_FLAG_END) != 0u);
+    assert(packet.header.payload_len == 1u);
+    assert(packet.header.meta == SPI_MONITOR_CAPTURE_MOSI);
+    assert(packet.payload[0] == 0x5Au);
 }
 
 static void test_cli_help_writes_response_without_connected_flag(void) {
@@ -1359,6 +1445,8 @@ int main(void) {
     test_spi_monitor_stopping_bus_clears_all_bus_channels();
     test_spi_monitor_bus_config_can_select_one_channel();
     test_spi_monitor_bus_config_rejects_empty_channel_selection();
+    test_spi_monitor_emits_mosi_miso_trace_packet();
+    test_spi_monitor_emits_mosi_only_trace_packet();
     test_cli_unknown_command_writes_fixed_helper();
     test_cli_help_writes_response_without_connected_flag();
     test_cli_help_is_flushed_after_temporary_tx_backpressure();

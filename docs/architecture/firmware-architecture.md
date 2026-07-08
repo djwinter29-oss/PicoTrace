@@ -56,10 +56,9 @@ flowchart LR
         SPICAP[SPI monitor scaffold / future packetize]
     end
 
-    CLI --> CDC
-    HID --> HIDDEV
+    CLI <--> CDC
+    HID <--> HIDDEV
     BULKDEV --> BULK
-    BULK --> BULKDEV
 
     CDC --> APP
     HIDDEV --> APP
@@ -70,7 +69,7 @@ flowchart LR
 
     I2CCAP --> RING
     SPICAP --> RING
-    BULKDEV --> RING
+    RING --> BULKDEV
 
     I2CMB --> I2CCAP
     SPIMB --> SPICAP
@@ -177,9 +176,9 @@ stream.
 
 The USB transport area exposes three host-visible functions:
 
-- CDC for interactive CLI control
-- HID for structured bounded commands
-- vendor bulk for trace streaming
+- CDC for interactive CLI command and text response traffic
+- HID for structured bounded command and status exchanges
+- vendor bulk for trace streaming from firmware to host
 
 That design is described in more detail in `docs/details/usb-multi-interface-design.md`.
 

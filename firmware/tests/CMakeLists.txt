@@ -38,6 +38,8 @@ target_include_directories(usb_app_test
         ../src/config
 )
 
+target_compile_definitions(usb_app_test PRIVATE SPI_MONITOR_TEST_HOOKS=1)
+
 if (BRIDGE_ENABLE_COVERAGE)
     if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(usb_app_test PRIVATE -O0 -g --coverage)

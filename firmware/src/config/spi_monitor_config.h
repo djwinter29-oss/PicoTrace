@@ -9,6 +9,11 @@
 #define SPI_MONITOR_CS_SLOTS_PER_BUS 3u
 /** @brief Total number of logical SPI channels exposed by the shared host-control model. */
 #define SPI_MONITOR_CHANNEL_COUNT (SPI_MONITOR_BUS_COUNT * SPI_MONITOR_CS_SLOTS_PER_BUS)
+/** @brief Number of physical SPI data lanes sampled across both observed buses. */
+#define SPI_MONITOR_LANE_COUNT (SPI_MONITOR_BUS_COUNT * 2u)
+
+/** @brief Number of 32-bit DMA words kept per ping-pong half-buffer for one sampled SPI lane. */
+#define SPI_MONITOR_DMA_BUFFER_WORDS 32u
 
 /** @brief Default inter-byte timeout used when callers pass `0`. */
 #define SPI_MONITOR_TIMEOUT_US_DEFAULT 1000u

@@ -8,9 +8,9 @@ adding separate physical links or protocol-specific side channels.
 The current firmware uses TinyUSB to expose three different host-visible USB functions at the same
 time:
 
-- CDC for the board-local text CLI
+- CDC for the board-local text CLI and its text responses
 - vendor bulk for high-rate trace streaming
-- HID for bounded structured control and status
+- HID for bounded structured control and status exchanges
 
 ## Related Architecture
 
@@ -56,7 +56,9 @@ with a terminal and use manually during bring-up, lab work, and debug.
 
 The CDC path is buffered in [firmware/src/usb/usb_cdc.c](c:/repo/Pico/PicoTrace/firmware/src/usb/usb_cdc.c) and is bridged into the CLI shell from [firmware/src/main.c](c:/repo/Pico/PicoTrace/firmware/src/main.c).
 
-CDC is not the main trace transport. It is intentionally treated as bounded command traffic.
+CDC is bidirectional: host text commands flow to the device and CLI or debug text flows back to
+the host. It is not the main trace transport and is intentionally treated as bounded command
+traffic.
 
 ### Vendor Bulk
 
@@ -86,7 +88,8 @@ The HID path in [firmware/src/usb/usb_hid.c](c:/repo/Pico/PicoTrace/firmware/src
 - LED control
 - reboot
 
-HID is kept bounded on purpose. It is a control path, not a second streaming channel.
+HID is bidirectional: host reports carry commands in and device reports carry status or replies
+back out. It is kept bounded on purpose. It is a control path, not a second streaming channel.
 
 ## Core Ownership Model
 

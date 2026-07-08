@@ -186,6 +186,31 @@ The architecture avoids that by never splitting USB class service across cores.
 
 The architecture does not make races impossible. It makes them narrow and visible.
 
+## Current SPI Capture Limitation
+
+The current SPI producer path also has one deliberate capture-model limitation.
+
+SPI bus ownership is resolved from `CS_N`, but the current implementation does not record `CS_N`
+state alongside every sampled SPI bit. Instead, it samples `CS_N` ownership at DMA half-buffer
+handoff and assumes the common transaction model where chip-select changes align with a practical
+transaction boundary.
+
+That means PicoTrace is intentionally focused on the common case:
+
+- one `CS_N` assertion maps to one logical transaction
+- `CS_N` changes usually come with a clock pause or idle gap
+- the next meaningful byte stream starts after that boundary
+
+The unsupported corner case is a master that changes `CS_N` fast enough inside one half-buffer that
+no reliable gap exists for buffer-handoff attribution.
+
+Current mitigation:
+
+- document the limitation explicitly
+- treat timeout and observed `CS_N` changes as normal transaction boundaries in the supported case
+- keep the implementation small until a target system proves that per-sample `CS_N` capture is
+    required
+
 ### Shared Policy Toggles
 
 Small shared flags such as stream enable are simple and low frequency, but they still cross logical
