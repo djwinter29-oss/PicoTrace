@@ -340,7 +340,6 @@ static bool i2c_monitor_start_channel(
 /** @copydoc i2c_monitor_init */
 bool i2c_monitor_init(void) {
     uint32_t channel;
-
     if (g_i2c_monitor_initialized) {
         return true;
     }
@@ -360,18 +359,6 @@ bool i2c_monitor_init(void) {
     irq_set_enabled(DMA_IRQ_0, true);
 
     for (channel = 0u; channel < I2C_MONITOR_CHANNEL_COUNT; ++channel) {
-        if (!i2c_trace_packet_builder_init(
-                &g_i2c_monitor_channels[channel].packet_builder,
-                g_i2c_monitor_logical_channels[channel],
-                i2c_monitor_push_trace_packet,
-                NULL,
-                i2c_monitor_timestamp_us
-            )) {
-            i2c_monitor_shutdown_all();
-            g_i2c_monitor_init_failed = true;
-            return false;
-        }
-
         i2c_monitor_release_channel_pins(&g_i2c_monitor_channels[channel]);
         i2c_monitor_reset_channel_runtime(&g_i2c_monitor_channels[channel]);
     }
