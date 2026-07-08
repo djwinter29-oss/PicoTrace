@@ -182,12 +182,18 @@ It still does not prove:
 - final compact transaction framing for host consumption
 - full error classification for malformed or ambiguous bus activity
 
-If the decoder detects an invalid input condition while a fragment is being assembled, the current
-design appends an explicit `ERROR` event to the current fragment, flushes that fragment
-immediately, and then resets the channel decode and packet state to a clean boundary. The host can
-therefore see that a bus-error boundary occurred and that information is missing after that point.
-If that immediate error fragment cannot be queued, the channel records overrun state and the next
-successful packet is marked with overflow.
+If the monitor needs to cut a channel at a boundary, the current implementation now uses one
+shared stop-first transition route for all of these cases:
+
+- `OVERFLOW`
+- `CONTROL_RECONFIG`
+- `CONTROL_STOP`
+- `ERROR`
+
+That route stops channel hardware first, emits the boundary event against the existing packet
+builder state, clears staged and decode state, and then either leaves the channel stopped or
+restarts it with the requested sample rate. If the boundary event cannot be queued and the channel
+is restarted, the next successful packet is marked with overflow instead.
 
 The current event stream also uses explicit boundary events for known non-bus causes:
 
@@ -195,8 +201,10 @@ The current event stream also uses explicit boundary events for known non-bus ca
 - `CONTROL_RECONFIG` when monitoring is intentionally restarted because the sample rate changed
 - `CONTROL_STOP` when monitoring is intentionally stopped by control action
 
-`ERROR` remains the fallback for bus-side or decode-side invalid fragments that are not one of
-those known control or overflow boundaries.
+`ERROR` is reserved as the default fallback when the monitor needs to report an error boundary but
+does not have a more specific event type. In the current design, known boundaries are classified as
+`OVERFLOW`, `CONTROL_RECONFIG`, or `CONTROL_STOP`, so normal operation may not emit a generic
+`ERROR` event at all.
 
 ## Sample Rate Model
 
@@ -234,15 +242,41 @@ When a completed fragment cannot be queued:
 
 When a second completed raw DMA block arrives before the producer-core poll path has consumed the
 already staged block for that channel, the current design treats that as an overrun boundary. The
-channel records sticky overrun status, appends an `OVERFLOW` event, drops the just-completed newer
-raw block, stops the channel, and restarts it with the same sample rate so later decode resumes
-from a clean boundary. If the boundary event cannot be emitted, the next successfully emitted trace
-packet from that restarted channel is marked with overflow status instead.
+DMA IRQ immediately stops that channel hardware, latches an `OVERFLOW` transition with the saved
+restart rate, and does no packetization or ring pushes itself. The producer-core poll path then
+finishes the same stop-first transition route: it emits `OVERFLOW`, clears state, and restarts the
+channel with the saved sample rate so later decode resumes from a clean boundary. If streaming has
+been disabled before that replay happens, the pending transition is collapsed to stop-only and the
+channel is not restarted. If the boundary event cannot be emitted, the next successfully emitted
+trace packet from that restarted channel is marked with overflow status instead.
 
-When streaming is disabled, the producer-side poll path shuts down each running channel instead of
-preserving partial transaction context. That stop disables the channel DMA IRQ, stops the PIO state
-machine, and clears staged raw buffers, partially filled DMA buffer contents, decoder state,
-packet-builder state, counters, and sticky overrun state for that streaming session.
+If stream disable races with a latched `OVERFLOW` transition, the current implementation preserves
+that `OVERFLOW` boundary as the loss reason and then keeps the channel stopped. It does not rewrite
+that pending overflow into `CONTROL_STOP`.
+
+On the USB consumer side, PicoTrace keeps the complementary simplification: `stream off` is the
+supported pause path and resets any partial bulk-packet transmit progress back to a packet boundary.
+The design does not attempt to preserve mid-packet USB transmit state across a later `stream on`.
+Physical USB disconnect is likewise treated as a likely board power-loss or reset event rather than
+as a reconnect scenario that must preserve an in-flight logical trace packet.
+
+Cross-core control requests do not execute pending monitor transitions. If a channel already has a
+latched next transition, `set rate` fails fast so the caller can retry later instead of mutating
+recovery state on behalf of the producer core.
+
+`get status` remains available during those producer-owned transitions. It returns the last current
+channel snapshot together with `transition_pending` and `transition_reason` so host-side tools can
+observe that the channel is between stable states without having the read itself advance recovery.
+
+Cross-core `set rate` requests also fail fast when streaming is disabled and the requested rate is
+non-zero. A caller may still send `0` to stop a channel, but may not start or restart capture while
+the shared stream gate is off.
+
+When streaming is disabled, the producer-side poll path routes each running channel through the
+same stop-first transition path with `CONTROL_STOP`. That stop disables the channel DMA IRQ, stops
+the PIO state machine, emits the stop boundary if it can be queued, and then clears staged raw
+buffers, partially filled DMA buffer contents, decoder state, packet-builder state, counters, and
+sticky overrun state for that streaming session.
 
 Re-enabling streaming does not restore the old monitor configuration automatically. A caller that
 wants capture again must start the desired channels explicitly.

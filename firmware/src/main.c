@@ -35,11 +35,12 @@ static const cli_shell_transport_t bridge_device_cli_transport = {
 };
 
 static void trace_producer_core1_main(void) {
-    bool init_ok = i2c_monitor_init();
+    bool init_ok = (i2c_monitor_init() == I2C_MONITOR_RC_OK);
 
     i2c_monitor_control_bind_executor(
         i2c_monitor_set_channel_sample_hz,
-        i2c_monitor_get_channel_status
+        i2c_monitor_get_channel_status,
+        i2c_monitor_get_all_status
     );
 
     multicore_fifo_push_blocking(init_ok ? 1u : 0u);

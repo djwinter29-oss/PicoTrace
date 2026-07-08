@@ -47,7 +47,14 @@ The current firmware now keeps the consumer side directly in `firmware/src/usb/u
 
 - `usb_bulk_poll_stream()` drains completed `trace_packet_t` records from the trace ring
 - partial USB writes retain the peeked ring slot until the full logical packet has been sent
+- disabling stream discards any partially transmitted logical packet so the next enable restarts from a clean packet boundary
 - no vendor data is emitted when the ring is empty
+
+PicoTrace intentionally keeps the USB-side contract simple:
+
+- the supported software pause boundary is `stream off`, not arbitrary transport suspend/resume
+- physical USB disconnect is treated as a likely power-loss or reset event for the RP2040 board, not as a stateful pause that must preserve an in-flight logical packet across reconnection
+- malformed queued packets are dropped defensively by the USB consumer instead of trying to repair them in place
 
 That partial-write behavior is an intentional design constraint on the producer side as well:
 
@@ -157,3 +164,8 @@ the producer may reuse it immediately.
 This matters for USB draining as well. If the USB side can only transmit part of a packet in one pass,
 the consumer should keep the peeked pointer plus a local transmit offset and only call `pop()` after
 the full logical packet has been sent.
+
+When the software stream gate is turned off, the current PicoTrace policy is to abandon that borrowed
+partial-send state and restart from the beginning of the oldest queued logical packet if streaming is
+enabled again later. This keeps the implementation simple and preserves explicit packet boundaries.
+PicoTrace does not currently try to resume a logical packet from the middle after a software stop.

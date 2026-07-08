@@ -15,7 +15,7 @@ typedef enum {
     I2C_DECODE_EVENT_DATA = 2u, /**< Reconstructed 8-bit I2C data byte. */
     I2C_DECODE_EVENT_ACK = 3u, /**< ACK or NACK bit sampled after one data byte. */
     I2C_DECODE_EVENT_STOP = 4u, /**< I2C STOP condition. */
-    I2C_DECODE_EVENT_ERROR = 128u, /**< Decoder-detected bus error or unclassified invalid fragment boundary. */
+    I2C_DECODE_EVENT_ERROR = 128u, /**< Reserved fallback event for unclassified error boundaries when a more specific event is not available. */
     I2C_DECODE_EVENT_OVERFLOW = 129u, /**< Capture continuity was lost because buffering could not keep up. */
     I2C_DECODE_EVENT_CONTROL_RECONFIG = 130u, /**< Monitoring was intentionally restarted because configuration changed. */
     I2C_DECODE_EVENT_CONTROL_STOP = 131u, /**< Monitoring was intentionally stopped by control action. */

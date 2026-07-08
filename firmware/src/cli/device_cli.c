@@ -45,13 +45,15 @@ static bool device_cli_write_i2cmon_status(uint32_t channel, const i2c_monitor_c
     snprintf(
         line,
         sizeof(line),
-        "i2cmon ch%lu %s hz=%lu buffers=%lu overruns=%lu sticky=%u",
+        "i2cmon ch%lu %s hz=%lu buffers=%lu overruns=%lu sticky=%u pending=%u reason=%u",
         (unsigned long)channel,
         status->running ? "running" : "stopped",
         (unsigned long)status->sample_hz,
         (unsigned long)status->completed_buffers,
         (unsigned long)status->overrun_count,
-        status->overrun ? 1u : 0u
+        status->overrun ? 1u : 0u,
+        status->transition_pending ? 1u : 0u,
+        (unsigned int)status->transition_reason
     );
     return cli_shell_write_line(line);
 }
@@ -74,12 +76,13 @@ static bool device_cli_help(int argc, const char *const *argv) {
 
 static bool device_cli_i2cmon(int argc, const char *const *argv) {
     i2c_monitor_channel_status_t status;
+    i2c_monitor_rc_t result;
     uint32_t channel;
     uint32_t sample_hz;
 
     if (argc == 3) {
         if ((strcmp(argv[1], "status") == 0) && device_cli_parse_u32(argv[2], &channel)) {
-            if (!i2c_monitor_control_get_channel_status(channel, &status)) {
+            if (i2c_monitor_control_get_channel_status(channel, &status) != I2C_MONITOR_RC_OK) {
                 return cli_shell_write_line("i2cmon status failed");
             }
 
@@ -87,11 +90,18 @@ static bool device_cli_i2cmon(int argc, const char *const *argv) {
         }
 
         if (device_cli_parse_u32(argv[1], &channel) && device_cli_parse_u32(argv[2], &sample_hz)) {
-            if (!i2c_monitor_control_set_channel_sample_hz(channel, sample_hz)) {
+            result = i2c_monitor_control_set_channel_sample_hz(channel, sample_hz);
+            if (result != I2C_MONITOR_RC_OK) {
+                if (result == I2C_MONITOR_RC_BUSY) {
+                    return cli_shell_write_line("i2cmon busy");
+                }
+                if (result == I2C_MONITOR_RC_DISABLED) {
+                    return cli_shell_write_line("i2cmon disabled");
+                }
                 return cli_shell_write_line("i2cmon apply failed");
             }
 
-            if (!i2c_monitor_control_get_channel_status(channel, &status)) {
+            if (i2c_monitor_control_get_channel_status(channel, &status) != I2C_MONITOR_RC_OK) {
                 return cli_shell_write_line("i2cmon status failed");
             }
 

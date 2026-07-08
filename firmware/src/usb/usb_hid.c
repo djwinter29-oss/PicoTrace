@@ -6,11 +6,12 @@
 
 #include "app_control.h"
 #include "config/i2c_monitor_config.h"
+#include "trace/decode/i2c_decoder.h"
 #include "trace/capture/i2c_monitor_control.h"
 
 #define USB_HID_I2C_MONITOR_SET_PAYLOAD_BYTES 5u
-#define USB_HID_I2C_MONITOR_STATUS_PAYLOAD_BYTES 16u
-#define USB_HID_I2C_MONITOR_ALL_STATUS_CHANNEL_BYTES 12u
+#define USB_HID_I2C_MONITOR_STATUS_PAYLOAD_BYTES 18u
+#define USB_HID_I2C_MONITOR_ALL_STATUS_CHANNEL_BYTES 14u
 #define USB_HID_I2C_MONITOR_ALL_STATUS_PAYLOAD_BYTES (I2C_MONITOR_CHANNEL_COUNT * USB_HID_I2C_MONITOR_ALL_STATUS_CHANNEL_BYTES)
 
 static uint32_t usb_hid_read_u32_le(const uint8_t *data) {
@@ -28,6 +29,7 @@ static void usb_hid_write_u32_le(uint8_t *data, uint32_t value) {
 }
 
 static bool usb_hid_handle_i2c_monitor_set_rate(usb_hid_command_t *response, const usb_hid_command_t *request) {
+    i2c_monitor_rc_t result;
     uint32_t sample_hz;
 
     if (request->payload_length < USB_HID_I2C_MONITOR_SET_PAYLOAD_BYTES) {
@@ -36,8 +38,13 @@ static bool usb_hid_handle_i2c_monitor_set_rate(usb_hid_command_t *response, con
     }
 
     sample_hz = usb_hid_read_u32_le(&request->payload[1]);
-    if (!i2c_monitor_control_set_channel_sample_hz(request->payload[0], sample_hz)) {
-        response->status = USB_HID_STATUS_REJECTED;
+    result = i2c_monitor_control_set_channel_sample_hz(request->payload[0], sample_hz);
+    if (result != I2C_MONITOR_RC_OK) {
+        if (result == I2C_MONITOR_RC_BUSY) {
+            response->status = USB_HID_STATUS_BUSY;
+        } else {
+            response->status = USB_HID_STATUS_REJECTED;
+        }
         return false;
     }
 
@@ -52,7 +59,7 @@ static bool usb_hid_handle_i2c_monitor_get_status(usb_hid_command_t *response, c
         return false;
     }
 
-    if (!i2c_monitor_control_get_channel_status(request->payload[0], &status)) {
+    if (i2c_monitor_control_get_channel_status(request->payload[0], &status) != I2C_MONITOR_RC_OK) {
         response->status = USB_HID_STATUS_REJECTED;
         return false;
     }
@@ -65,29 +72,33 @@ static bool usb_hid_handle_i2c_monitor_get_status(usb_hid_command_t *response, c
     usb_hid_write_u32_le(&response->payload[4], status.sample_hz);
     usb_hid_write_u32_le(&response->payload[8], status.completed_buffers);
     usb_hid_write_u32_le(&response->payload[12], status.overrun_count);
+    response->payload[16] = status.transition_pending ? 1u : 0u;
+    response->payload[17] = status.transition_reason;
     return true;
 }
 
 static bool usb_hid_handle_i2c_monitor_get_all_status(usb_hid_command_t *response) {
+    i2c_monitor_channel_status_t status[I2C_MONITOR_CHANNEL_COUNT];
     uint32_t channel;
+
+    if (i2c_monitor_control_get_all_status(status) != I2C_MONITOR_RC_OK) {
+        response->status = USB_HID_STATUS_REJECTED;
+        response->payload_length = 0u;
+        return false;
+    }
 
     response->payload_length = USB_HID_I2C_MONITOR_ALL_STATUS_PAYLOAD_BYTES;
     for (channel = 0u; channel < I2C_MONITOR_CHANNEL_COUNT; ++channel) {
-        i2c_monitor_channel_status_t status;
         uint8_t *payload = &response->payload[channel * USB_HID_I2C_MONITOR_ALL_STATUS_CHANNEL_BYTES];
 
-        if (!i2c_monitor_control_get_channel_status(channel, &status)) {
-            response->status = USB_HID_STATUS_REJECTED;
-            response->payload_length = 0u;
-            return false;
-        }
-
         payload[0] = (uint8_t)channel;
-        payload[1] = status.initialized ? 1u : 0u;
-        payload[2] = status.running ? 1u : 0u;
-        payload[3] = status.overrun ? 1u : 0u;
-        usb_hid_write_u32_le(&payload[4], status.sample_hz);
-        usb_hid_write_u32_le(&payload[8], status.overrun_count);
+        payload[1] = status[channel].initialized ? 1u : 0u;
+        payload[2] = status[channel].running ? 1u : 0u;
+        payload[3] = status[channel].overrun ? 1u : 0u;
+        usb_hid_write_u32_le(&payload[4], status[channel].sample_hz);
+        usb_hid_write_u32_le(&payload[8], status[channel].overrun_count);
+        payload[12] = status[channel].transition_pending ? 1u : 0u;
+        payload[13] = status[channel].transition_reason;
     }
 
     return true;

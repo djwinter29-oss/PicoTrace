@@ -12,19 +12,12 @@
 static const trace_packet_t *usb_stream_packet;
 static uint32_t usb_stream_packet_offset;
 
-static uint32_t usb_bulk_trace_packet_bytes(const trace_packet_t *packet) {
-    uint32_t payload_len = packet->header.payload_len;
-
-    if (payload_len > TRACE_PACKET_PAYLOAD_BYTES) {
-        payload_len = TRACE_PACKET_PAYLOAD_BYTES;
-    }
-
-    return TRACE_PACKET_HEADER_BYTES + payload_len;
+static void usb_bulk_reset_stream_state(void) {
+    usb_stream_packet = NULL;
+    usb_stream_packet_offset = 0u;
 }
 
-static bool usb_bulk_poll_trace_ring(void) {
-    bool emitted = false;
-
+static void usb_bulk_poll_trace_ring(void) {
     while (true) {
         uint32_t packet_bytes;
         uint32_t remaining;
@@ -36,10 +29,18 @@ static bool usb_bulk_poll_trace_ring(void) {
             if (usb_stream_packet == NULL) {
                 break;
             }
+
+            if (usb_stream_packet->header.payload_len > TRACE_PACKET_PAYLOAD_BYTES) {
+                trace_ring_pop();
+                usb_bulk_reset_stream_state();
+                continue;
+            }
+
+            packet_bytes = TRACE_PACKET_HEADER_BYTES + usb_stream_packet->header.payload_len;
+        } else {
+            packet_bytes = TRACE_PACKET_HEADER_BYTES + usb_stream_packet->header.payload_len;
         }
 
-        emitted = true;
-        packet_bytes = usb_bulk_trace_packet_bytes(usb_stream_packet);
         remaining = packet_bytes - usb_stream_packet_offset;
         written = usb_bulk_stream_write(((const uint8_t *)usb_stream_packet) + usb_stream_packet_offset, remaining);
         if (written == 0u) {
@@ -49,12 +50,9 @@ static bool usb_bulk_poll_trace_ring(void) {
         usb_stream_packet_offset += written;
         if (usb_stream_packet_offset >= packet_bytes) {
             trace_ring_pop();
-            usb_stream_packet = NULL;
-            usb_stream_packet_offset = 0u;
+            usb_bulk_reset_stream_state();
         }
     }
-
-    return emitted;
 }
 
 static uint32_t usb_bulk_write_chunk(const uint8_t *data, uint32_t length, bool exact) {
@@ -102,10 +100,15 @@ uint32_t usb_bulk_stream_write(const uint8_t *data, uint32_t length) {
 
 void usb_bulk_poll_stream(bool enabled) {
     if (!enabled) {
+        usb_bulk_reset_stream_state();
         return;
     }
 
-    (void)usb_bulk_poll_trace_ring();
+    if (!tud_ready()) {
+        return;
+    }
+
+    usb_bulk_poll_trace_ring();
 }
 
 void usb_bulk_flush(void) {

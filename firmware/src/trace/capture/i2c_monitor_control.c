@@ -21,6 +21,7 @@ typedef enum {
     I2C_MONITOR_CONTROL_COMMAND_NONE = 0u,
     I2C_MONITOR_CONTROL_COMMAND_SET_RATE = 1u,
     I2C_MONITOR_CONTROL_COMMAND_GET_STATUS = 2u,
+    I2C_MONITOR_CONTROL_COMMAND_GET_ALL_STATUS = 3u,
 } i2c_monitor_control_command_t;
 
 typedef struct {
@@ -28,13 +29,14 @@ typedef struct {
     uint32_t command;
     uint32_t channel;
     uint32_t sample_hz;
-    bool result;
-    i2c_monitor_channel_status_t status;
+    i2c_monitor_rc_t result;
+    i2c_monitor_channel_status_t status[I2C_MONITOR_CHANNEL_COUNT];
 } i2c_monitor_control_mailbox_t;
 
 static i2c_monitor_control_mailbox_t g_i2c_monitor_control_mailbox;
 static i2c_monitor_control_set_channel_fn g_i2c_monitor_control_set_channel_fn;
 static i2c_monitor_control_get_status_fn g_i2c_monitor_control_get_status_fn;
+static i2c_monitor_control_get_all_status_fn g_i2c_monitor_control_get_all_status_fn;
 static bool g_i2c_monitor_control_inline_mode;
 
 static void i2c_monitor_control_wait_hint(void) {
@@ -63,44 +65,35 @@ static void i2c_monitor_control_store_state(uint32_t state) {
 #endif
 }
 
-static bool i2c_monitor_control_run_inline_set(uint32_t channel, uint32_t sample_hz) {
-    if (g_i2c_monitor_control_set_channel_fn == NULL) {
-        return false;
-    }
-
-    return g_i2c_monitor_control_set_channel_fn(channel, sample_hz);
-}
-
-static bool i2c_monitor_control_run_inline_get(uint32_t channel, i2c_monitor_channel_status_t *status_out) {
-    if ((g_i2c_monitor_control_get_status_fn == NULL) || (status_out == NULL)) {
-        return false;
-    }
-
-    return g_i2c_monitor_control_get_status_fn(channel, status_out);
-}
-
 void i2c_monitor_control_init(void) {
     memset(&g_i2c_monitor_control_mailbox, 0, sizeof(g_i2c_monitor_control_mailbox));
     g_i2c_monitor_control_set_channel_fn = NULL;
     g_i2c_monitor_control_get_status_fn = NULL;
+    g_i2c_monitor_control_get_all_status_fn = NULL;
     g_i2c_monitor_control_inline_mode = false;
 }
 
 void i2c_monitor_control_bind_executor(
     i2c_monitor_control_set_channel_fn set_channel_fn,
-    i2c_monitor_control_get_status_fn get_status_fn
+    i2c_monitor_control_get_status_fn get_status_fn,
+    i2c_monitor_control_get_all_status_fn get_all_status_fn
 ) {
     g_i2c_monitor_control_set_channel_fn = set_channel_fn;
     g_i2c_monitor_control_get_status_fn = get_status_fn;
+    g_i2c_monitor_control_get_all_status_fn = get_all_status_fn;
 }
 
 void i2c_monitor_control_set_inline_mode(bool enabled) {
     g_i2c_monitor_control_inline_mode = enabled;
 }
 
-bool i2c_monitor_control_set_channel_sample_hz(uint32_t channel, uint32_t sample_hz) {
+i2c_monitor_rc_t i2c_monitor_control_set_channel_sample_hz(uint32_t channel, uint32_t sample_hz) {
     if (g_i2c_monitor_control_inline_mode) {
-        return i2c_monitor_control_run_inline_set(channel, sample_hz);
+        if (g_i2c_monitor_control_set_channel_fn == NULL) {
+            return I2C_MONITOR_RC_FAILED;
+        }
+
+        return g_i2c_monitor_control_set_channel_fn(channel, sample_hz);
     }
 
     while (i2c_monitor_control_load_state() != I2C_MONITOR_CONTROL_STATE_IDLE) {
@@ -120,13 +113,17 @@ bool i2c_monitor_control_set_channel_sample_hz(uint32_t channel, uint32_t sample
     return g_i2c_monitor_control_mailbox.result;
 }
 
-bool i2c_monitor_control_get_channel_status(uint32_t channel, i2c_monitor_channel_status_t *status_out) {
+i2c_monitor_rc_t i2c_monitor_control_get_channel_status(uint32_t channel, i2c_monitor_channel_status_t *status_out) {
     if (g_i2c_monitor_control_inline_mode) {
-        return i2c_monitor_control_run_inline_get(channel, status_out);
+        if ((g_i2c_monitor_control_get_status_fn == NULL) || (status_out == NULL)) {
+            return I2C_MONITOR_RC_INVALID;
+        }
+
+        return g_i2c_monitor_control_get_status_fn(channel, status_out);
     }
 
     if (status_out == NULL) {
-        return false;
+        return I2C_MONITOR_RC_INVALID;
     }
 
     while (i2c_monitor_control_load_state() != I2C_MONITOR_CONTROL_STATE_IDLE) {
@@ -141,7 +138,40 @@ bool i2c_monitor_control_get_channel_status(uint32_t channel, i2c_monitor_channe
         i2c_monitor_control_wait_hint();
     }
 
-    *status_out = g_i2c_monitor_control_mailbox.status;
+    *status_out = g_i2c_monitor_control_mailbox.status[0];
+    i2c_monitor_control_store_state(I2C_MONITOR_CONTROL_STATE_IDLE);
+    return g_i2c_monitor_control_mailbox.result;
+}
+
+i2c_monitor_rc_t i2c_monitor_control_get_all_status(i2c_monitor_channel_status_t *status_out) {
+    if (g_i2c_monitor_control_inline_mode) {
+        if ((g_i2c_monitor_control_get_all_status_fn == NULL) || (status_out == NULL)) {
+            return I2C_MONITOR_RC_INVALID;
+        }
+
+        return g_i2c_monitor_control_get_all_status_fn(status_out);
+    }
+
+    if (status_out == NULL) {
+        return I2C_MONITOR_RC_INVALID;
+    }
+
+    while (i2c_monitor_control_load_state() != I2C_MONITOR_CONTROL_STATE_IDLE) {
+        i2c_monitor_control_wait_hint();
+    }
+
+    g_i2c_monitor_control_mailbox.command = I2C_MONITOR_CONTROL_COMMAND_GET_ALL_STATUS;
+    i2c_monitor_control_store_state(I2C_MONITOR_CONTROL_STATE_PENDING);
+
+    while (i2c_monitor_control_load_state() != I2C_MONITOR_CONTROL_STATE_COMPLETE) {
+        i2c_monitor_control_wait_hint();
+    }
+
+    memcpy(
+        status_out,
+        g_i2c_monitor_control_mailbox.status,
+        I2C_MONITOR_CHANNEL_COUNT * sizeof(g_i2c_monitor_control_mailbox.status[0])
+    );
     i2c_monitor_control_store_state(I2C_MONITOR_CONTROL_STATE_IDLE);
     return g_i2c_monitor_control_mailbox.result;
 }
@@ -153,22 +183,32 @@ bool i2c_monitor_control_poll(void) {
 
     switch ((i2c_monitor_control_command_t)g_i2c_monitor_control_mailbox.command) {
         case I2C_MONITOR_CONTROL_COMMAND_SET_RATE:
-            g_i2c_monitor_control_mailbox.result = i2c_monitor_control_run_inline_set(
-                g_i2c_monitor_control_mailbox.channel,
-                g_i2c_monitor_control_mailbox.sample_hz
-            );
+            g_i2c_monitor_control_mailbox.result = (g_i2c_monitor_control_set_channel_fn == NULL)
+                ? I2C_MONITOR_RC_FAILED
+                : g_i2c_monitor_control_set_channel_fn(
+                    g_i2c_monitor_control_mailbox.channel,
+                    g_i2c_monitor_control_mailbox.sample_hz
+                );
             break;
 
         case I2C_MONITOR_CONTROL_COMMAND_GET_STATUS:
-            g_i2c_monitor_control_mailbox.result = i2c_monitor_control_run_inline_get(
-                g_i2c_monitor_control_mailbox.channel,
-                &g_i2c_monitor_control_mailbox.status
-            );
+            g_i2c_monitor_control_mailbox.result = (g_i2c_monitor_control_get_status_fn == NULL)
+                ? I2C_MONITOR_RC_INVALID
+                : g_i2c_monitor_control_get_status_fn(
+                    g_i2c_monitor_control_mailbox.channel,
+                    &g_i2c_monitor_control_mailbox.status[0]
+                );
+            break;
+
+        case I2C_MONITOR_CONTROL_COMMAND_GET_ALL_STATUS:
+            g_i2c_monitor_control_mailbox.result = (g_i2c_monitor_control_get_all_status_fn == NULL)
+                ? I2C_MONITOR_RC_INVALID
+                : g_i2c_monitor_control_get_all_status_fn(g_i2c_monitor_control_mailbox.status);
             break;
 
         case I2C_MONITOR_CONTROL_COMMAND_NONE:
         default:
-            g_i2c_monitor_control_mailbox.result = false;
+            g_i2c_monitor_control_mailbox.result = I2C_MONITOR_RC_INVALID;
             break;
     }
 

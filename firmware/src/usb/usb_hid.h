@@ -26,6 +26,7 @@ typedef enum {
 	USB_HID_STATUS_BAD_LENGTH = 2u,
 	USB_HID_STATUS_PENDING = 3u,
 	USB_HID_STATUS_REJECTED = 4u,
+	USB_HID_STATUS_BUSY = 5u,
 } usb_hid_status_t;
 
 typedef struct {
