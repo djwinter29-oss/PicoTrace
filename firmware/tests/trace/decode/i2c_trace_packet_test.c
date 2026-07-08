@@ -107,7 +107,64 @@ static void test_i2c_trace_packet_builder_marks_next_packet_after_overflow(void)
     assert(capture.packets[0].header.timestamp_us == 1234u);
 }
 
+static void test_i2c_trace_packet_builder_marks_explicit_overflow_on_next_packet(void) {
+    i2c_trace_packet_builder_t builder;
+    test_i2c_packet_capture_t capture = {0};
+
+    assert(i2c_trace_packet_builder_init(&builder, 1u, capture_i2c_packet, &capture, test_timestamp_us) == true);
+
+    i2c_trace_packet_builder_mark_next_packet(&builder, TRACE_FLAG_OVERFLOW);
+    assert(i2c_trace_packet_builder_append_event(&builder, I2C_DECODE_EVENT_STOP, 0u) == true);
+
+    assert(capture.count == 1u);
+    assert(capture.packets[0].header.flags == (TRACE_FLAG_OVERFLOW | TRACE_FLAG_END));
+    assert(capture.packets[0].header.sequence == 1u);
+}
+
+static void test_i2c_trace_packet_builder_emits_error_event_fragment_immediately(void) {
+    i2c_trace_packet_builder_t builder;
+    test_i2c_packet_capture_t capture = {0};
+
+    assert(i2c_trace_packet_builder_init(&builder, 1u, capture_i2c_packet, &capture, test_timestamp_us) == true);
+    assert(i2c_trace_packet_builder_append_event(&builder, I2C_DECODE_EVENT_DATA, 0x55u) == true);
+    assert(i2c_trace_packet_builder_append_event(
+               &builder,
+               I2C_DECODE_EVENT_ERROR,
+               (uint8_t)I2C_DECODER_RESULT_INVALID_INPUT
+           ) == true);
+
+    assert(capture.count == 1u);
+    assert(capture.packets[0].header.flags == TRACE_FLAG_END);
+    assert(capture.packets[0].header.payload_len == (2u * I2C_TRACE_EVENT_BYTES));
+    assert(capture.packets[0].header.meta == 2u);
+    assert(capture.packets[0].payload[0] == I2C_DECODE_EVENT_DATA);
+    assert(capture.packets[0].payload[1] == 0x55u);
+    assert(capture.packets[0].payload[2] == I2C_DECODE_EVENT_ERROR);
+    assert(capture.packets[0].payload[3] == (uint8_t)I2C_DECODER_RESULT_INVALID_INPUT);
+}
+
+static void test_i2c_trace_packet_builder_emits_control_boundary_fragment_immediately(void) {
+    i2c_trace_packet_builder_t builder;
+    test_i2c_packet_capture_t capture = {0};
+
+    assert(i2c_trace_packet_builder_init(&builder, 1u, capture_i2c_packet, &capture, test_timestamp_us) == true);
+    assert(i2c_trace_packet_builder_append_event(&builder, I2C_DECODE_EVENT_DATA, 0x33u) == true);
+    assert(i2c_trace_packet_builder_append_event(&builder, I2C_DECODE_EVENT_CONTROL_RECONFIG, 0u) == true);
+
+    assert(capture.count == 1u);
+    assert(capture.packets[0].header.flags == TRACE_FLAG_END);
+    assert(capture.packets[0].header.payload_len == (2u * I2C_TRACE_EVENT_BYTES));
+    assert(capture.packets[0].header.meta == 2u);
+    assert(capture.packets[0].payload[0] == I2C_DECODE_EVENT_DATA);
+    assert(capture.packets[0].payload[1] == 0x33u);
+    assert(capture.packets[0].payload[2] == I2C_DECODE_EVENT_CONTROL_RECONFIG);
+    assert(capture.packets[0].payload[3] == 0u);
+}
+
 void run_i2c_trace_packet_tests(void) {
     test_i2c_trace_packet_builder_fragments_full_transaction();
     test_i2c_trace_packet_builder_marks_next_packet_after_overflow();
+    test_i2c_trace_packet_builder_marks_explicit_overflow_on_next_packet();
+    test_i2c_trace_packet_builder_emits_error_event_fragment_immediately();
+    test_i2c_trace_packet_builder_emits_control_boundary_fragment_immediately();
 }

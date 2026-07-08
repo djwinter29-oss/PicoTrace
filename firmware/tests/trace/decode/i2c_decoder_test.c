@@ -250,6 +250,47 @@ static void test_i2c_decoder_preserves_progress_after_sink_rejection(void) {
     assert(second_capture.events[2].type == I2C_DECODE_EVENT_STOP);
 }
 
+static void test_i2c_decoder_reset_discards_inflight_transaction_state(void) {
+    i2c_decoder_state_t decoder_state;
+    uint8_t first_samples[64];
+    uint8_t second_samples[128];
+    uint32_t first_sample_count = 0u;
+    uint32_t second_sample_count = 0u;
+    uint32_t first_raw_words[8];
+    uint32_t second_raw_words[8];
+    uint32_t first_raw_word_count;
+    uint32_t second_raw_word_count;
+    test_i2c_event_capture_t capture = {0};
+
+    i2c_decoder_init(&decoder_state);
+
+    append_i2c_sample(first_samples, &first_sample_count, true, true, 3u);
+    append_i2c_sample(first_samples, &first_sample_count, false, true, 3u);
+    append_i2c_bit(first_samples, &first_sample_count, 1u);
+    append_i2c_bit(first_samples, &first_sample_count, 0u);
+    append_i2c_bit(first_samples, &first_sample_count, 1u);
+    append_i2c_bit(first_samples, &first_sample_count, 0u);
+
+    append_i2c_bit(second_samples, &second_sample_count, 0u);
+    append_i2c_bit(second_samples, &second_sample_count, 0u);
+    append_i2c_bit(second_samples, &second_sample_count, 0u);
+    append_i2c_bit(second_samples, &second_sample_count, 0u);
+    append_i2c_bit(second_samples, &second_sample_count, 0u);
+    append_i2c_bit(second_samples, &second_sample_count, 0u);
+
+    first_raw_word_count = pack_i2c_samples(first_raw_words, 8u, first_samples, first_sample_count);
+    second_raw_word_count = pack_i2c_samples(second_raw_words, 8u, second_samples, second_sample_count);
+
+    assert(i2c_decoder_process_buffer(&decoder_state, first_raw_words, first_raw_word_count, capture_i2c_event, &capture) == I2C_DECODER_RESULT_OK);
+    assert(capture.count == 1u);
+    assert(capture.events[0].type == I2C_DECODE_EVENT_START);
+
+    i2c_decoder_init(&decoder_state);
+
+    assert(i2c_decoder_process_buffer(&decoder_state, second_raw_words, second_raw_word_count, capture_i2c_event, &capture) == I2C_DECODER_RESULT_OK);
+    assert(capture.count == 1u);
+}
+
 static void test_i2c_decoder_ignores_one_sample_sda_glitch_while_scl_high(void) {
     i2c_decoder_state_t decoder_state;
     uint8_t samples[256];
@@ -307,5 +348,6 @@ void run_i2c_decoder_tests(void) {
     test_i2c_decoder_emits_events_from_oversampled_buffer();
     test_i2c_decoder_carries_transaction_across_buffers();
     test_i2c_decoder_preserves_progress_after_sink_rejection();
+    test_i2c_decoder_reset_discards_inflight_transaction_state();
     test_i2c_decoder_ignores_one_sample_sda_glitch_while_scl_high();
 }

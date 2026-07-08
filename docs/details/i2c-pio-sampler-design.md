@@ -43,6 +43,12 @@ The sampler now starts idle at boot. A channel begins sampling only when the pro
 path requests a non-zero oversampling rate for that channel. Passing `0` stops that channel and
 resets its decoder, packet builder, DMA state, and pins back to plain input GPIO state.
 
+Changing a channel from one non-zero sample rate to another is implemented the same way: the
+current channel instance is stopped first, then a fresh channel instance is started with the new
+rate. This is intentionally destructive. Any in-flight raw samples, partial decode state, open
+packet-builder state, completed-buffer counters, and sticky overrun state for that running session
+are discarded as part of the retune.
+
 ## Hardware Mapping Assumption
 
 The default channel mapping follows `docs/hardware-connections.md`:
@@ -127,16 +133,21 @@ collecting the next raw sample block.
 
 The current implementation handles completed DMA buffers directly in the DMA IRQ path.
 
-For each completed buffer the handler:
+For each completed buffer the IRQ path:
 
 - acknowledges the DMA completion
 - identifies the just-finished ping-pong slot
 - immediately re-arms DMA on the alternate slot
-- passes the completed raw sample block to the decoder
+- copies the completed raw sample block into a per-channel staging buffer
+
+Then the producer-core poll path:
+
+- stops any active channel whenever streaming is disabled
+- passes one staged raw sample block at a time to the decoder
 - appends decoded I2C items into a persistent per-channel trace packet buffer
 
-This means DMA completion is still handled capture-first, but packet assembly is no longer forced to
-flush at DMA buffer boundaries.
+This keeps DMA completion capture-first while moving decode and packet assembly out of the hard IRQ
+path. Packet assembly is still no longer forced to flush at DMA buffer boundaries.
 
 ## Current Buffer Handoff Contract
 
@@ -171,6 +182,22 @@ It still does not prove:
 - final compact transaction framing for host consumption
 - full error classification for malformed or ambiguous bus activity
 
+If the decoder detects an invalid input condition while a fragment is being assembled, the current
+design appends an explicit `ERROR` event to the current fragment, flushes that fragment
+immediately, and then resets the channel decode and packet state to a clean boundary. The host can
+therefore see that a bus-error boundary occurred and that information is missing after that point.
+If that immediate error fragment cannot be queued, the channel records overrun state and the next
+successful packet is marked with overflow.
+
+The current event stream also uses explicit boundary events for known non-bus causes:
+
+- `OVERFLOW` when capture continuity is lost because buffering could not keep up
+- `CONTROL_RECONFIG` when monitoring is intentionally restarted because the sample rate changed
+- `CONTROL_STOP` when monitoring is intentionally stopped by control action
+
+`ERROR` remains the fallback for bus-side or decode-side invalid fragments that are not one of
+those known control or overflow boundaries.
+
 ## Sample Rate Model
 
 Each channel has an independent runtime `sample_hz` selected when that channel is started.
@@ -196,7 +223,29 @@ more important than preserving every decoded fragment when the ring cannot accep
 
 The current implementation does not overwrite already-queued ring packets on overrun. That would
 conflict with the current zero-copy USB consumer, which may hold a borrowed pointer into the oldest
-ring slot across partial USB writes.
+ring slot across partial USB writes. In other words, the current producer policy is explicitly
+drop-newest-on-overflow, not overwrite-oldest.
+
+When a completed fragment cannot be queued:
+
+- the fragment that just failed to enqueue is discarded
+- the channel sticky overrun state remains set until the channel is stopped or restarted
+- the next successfully emitted trace packet is marked so the host can detect that loss occurred
+
+When a second completed raw DMA block arrives before the producer-core poll path has consumed the
+already staged block for that channel, the current design treats that as an overrun boundary. The
+channel records sticky overrun status, appends an `OVERFLOW` event, drops the just-completed newer
+raw block, stops the channel, and restarts it with the same sample rate so later decode resumes
+from a clean boundary. If the boundary event cannot be emitted, the next successfully emitted trace
+packet from that restarted channel is marked with overflow status instead.
+
+When streaming is disabled, the producer-side poll path shuts down each running channel instead of
+preserving partial transaction context. That stop disables the channel DMA IRQ, stops the PIO state
+machine, and clears staged raw buffers, partially filled DMA buffer contents, decoder state,
+packet-builder state, counters, and sticky overrun state for that streaming session.
+
+Re-enabling streaming does not restore the old monitor configuration automatically. A caller that
+wants capture again must start the desired channels explicitly.
 
 ## Why This Stops Before Decode
 
@@ -222,6 +271,13 @@ Completed raw DMA buffers are decoded into event fragments such as:
 - `DATA`
 - `ACK`
 - `STOP`
+- `ERROR`
+- `OVERFLOW`
+- `CONTROL_RECONFIG`
+- `CONTROL_STOP`
+
+Normal bus-traffic events stay in the low numeric range, while synthetic boundary and error events
+start at `0x80` so host-side decoders can distinguish them cheaply without a second sideband.
 
 Those decoded events are then packed into one or more fixed-size `trace_packet_t` records and
 pushed into the singleton queue described in `docs/details/trace-ring-buffer-design.md`.
@@ -263,7 +319,8 @@ service work in the same loop.
 
 - one DMA channel per monitored I2C channel, restarted from the DMA IRQ handler
 - ring packets currently carry decoded event fragments rather than final transaction summaries
-- decode and packet append work currently execute in the DMA IRQ path
+- the DMA IRQ path still does one bounded raw-buffer copy into a staging slot before the producer
+    poll path decodes it
 - decode timing assumptions are based on oversampled SCL rising-edge reconstruction and have not yet
     been tuned against every malformed or marginal bus waveform case
 

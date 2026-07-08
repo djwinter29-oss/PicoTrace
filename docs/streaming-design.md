@@ -49,6 +49,12 @@ The current firmware now keeps the consumer side directly in `firmware/src/usb/u
 - partial USB writes retain the peeked ring slot until the full logical packet has been sent
 - no vendor data is emitted when the ring is empty
 
+That partial-write behavior is an intentional design constraint on the producer side as well:
+
+- the producer must treat already-queued packets as immutable
+- queue overflow is handled by dropping the newly produced packet fragment
+- the producer reports that loss with overflow metadata instead of overwriting older queued packets
+
 The current I2C monitor scaffold now establishes the capture-side buffer boundary for that upgrade:
 
 - one PIO state machine per I2C channel
@@ -105,6 +111,12 @@ The trace ring is a single-producer, single-consumer queue.
 - Maximum observed occupancy is reported through `trace_ring_high_watermark()`.
 - `trace_ring_push()` copies the caller packet into the ring before returning.
 - `trace_ring_pop_copy()` copies the oldest queued packet into caller-owned storage and advances the ring in one step.
+
+The current PicoTrace policy on queue overflow is drop-newest, not overwrite-oldest.
+
+This is intentional because the USB consumer may hold a borrowed pointer returned by
+`trace_ring_peek()` across multiple bulk transfers while finishing one logical packet. Overwriting
+older queued slots would therefore risk corrupting a packet still being transmitted.
 
 The queue exposes packet availability with `trace_ring_available()` and free space with
 `trace_ring_free()`. These are advisory snapshots for status and diagnostics only. They must not be

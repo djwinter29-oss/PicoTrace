@@ -51,6 +51,7 @@ static void trace_producer_core1_main(void) {
 
     while (true) {
         i2c_monitor_control_poll();
+        i2c_monitor_poll();
         tight_loop_contents();
     }
 }

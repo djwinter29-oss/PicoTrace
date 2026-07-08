@@ -34,10 +34,24 @@ typedef struct {
 bool i2c_monitor_init(void);
 
 /**
+ * @brief Service completed raw sample buffers on the producer core.
+ *
+ * This function drains any raw sample blocks staged by the DMA IRQ handler, stops active monitor
+ * channels when streaming is disabled, and runs decode plus packetization outside the hard IRQ
+ * path.
+ * Call it regularly from the same producer core that owns the monitor.
+ */
+void i2c_monitor_poll(void);
+
+/**
  * @brief Start or stop one monitor channel.
  * @param channel Zero-based monitor channel index.
  * @param sample_hz Oversampling rate in Hz, or `0` to stop sampling and reset the channel state.
  * @return `true` when the request was applied, or `false` when the input was invalid or setup failed.
+ *
+ * Passing a different non-zero sample rate is also destructive: the current channel instance is
+ * stopped, its runtime decode and packet state is discarded, and the channel is started again with
+ * the new rate.
  *
  * This API is owned by the producer core that initialized the monitor. Callers on other cores must
  * route requests onto that core instead of touching the monitor directly.

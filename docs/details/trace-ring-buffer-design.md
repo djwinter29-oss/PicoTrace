@@ -264,10 +264,17 @@ When full:
 - the packet is not copied into the ring
 - `dropped_packets` is incremented
 
+This is a drop-newest overflow policy. The oldest queued packet remains untouched.
+
 The current design drops on overflow rather than blocking the producer.
 
 This is appropriate for a passive trace path where bounded runtime behavior matters more than forcing
 the producer to wait indefinitely.
+
+The design also intentionally does not overwrite the oldest queued slot on overflow. In the current
+PicoTrace consumer path, the USB side may keep a borrowed pointer returned by `trace_ring_peek()`
+while it completes a multi-transfer write of that logical packet. Overwriting the oldest slot would
+therefore create a producer-consumer race against in-flight USB transmission.
 
 ## Empty Condition
 

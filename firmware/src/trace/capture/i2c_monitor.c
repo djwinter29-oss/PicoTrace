@@ -19,6 +19,7 @@
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
 #include "hardware/pio.h"
+#include "hardware/sync.h"
 #include "pico/time.h"
 
 #include "app_control.h"
@@ -40,6 +41,7 @@ typedef struct {
     uint8_t sm;
     int dma_channel;
     uint8_t active_buffer;
+    volatile bool staged_buffer_ready;
     bool running;
     bool overrun;
     uint32_t sample_hz;
@@ -47,6 +49,7 @@ typedef struct {
     uint32_t overrun_count;
     i2c_decoder_state_t decoder_state;
     i2c_trace_packet_builder_t packet_builder;
+    uint32_t staged_buffer[I2C_MONITOR_BUFFER_WORDS];
     uint32_t buffers[I2C_MONITOR_BUFFER_COUNT][I2C_MONITOR_BUFFER_WORDS];
 } i2c_monitor_channel_state_t;
 
@@ -99,16 +102,50 @@ static i2c_monitor_channel_state_t *i2c_monitor_get_channel_state(uint32_t chann
     return &g_i2c_monitor_channels[channel];
 }
 
+static void i2c_monitor_reset_channel_capture_state(
+    i2c_monitor_channel_state_t *channel_state,
+    bool clear_status,
+    uint8_t next_packet_flags
+) {
+    channel_state->staged_buffer_ready = false;
+    memset(channel_state->staged_buffer, 0, sizeof(channel_state->staged_buffer));
+    memset(channel_state->buffers, 0, sizeof(channel_state->buffers));
+    i2c_trace_packet_builder_discard(&channel_state->packet_builder);
+    if (next_packet_flags != 0u) {
+        i2c_trace_packet_builder_mark_next_packet(&channel_state->packet_builder, next_packet_flags);
+    }
+    i2c_decoder_init(&channel_state->decoder_state);
+    if (clear_status) {
+        channel_state->overrun = false;
+        channel_state->completed_buffers = 0u;
+        channel_state->overrun_count = 0u;
+    }
+}
+
+static bool i2c_monitor_take_staged_buffer(
+    i2c_monitor_channel_state_t *channel_state,
+    uint32_t *raw_words,
+    uint32_t raw_word_count
+) {
+    uint32_t irq_state;
+
+    irq_state = save_and_disable_interrupts();
+    if (!channel_state->staged_buffer_ready) {
+        restore_interrupts(irq_state);
+        return false;
+    }
+
+    memcpy(raw_words, channel_state->staged_buffer, raw_word_count * sizeof(raw_words[0]));
+    channel_state->staged_buffer_ready = false;
+    restore_interrupts(irq_state);
+    return true;
+}
+
 static void i2c_monitor_reset_channel_runtime(i2c_monitor_channel_state_t *channel_state) {
     channel_state->active_buffer = 0u;
     channel_state->running = false;
-    channel_state->overrun = false;
     channel_state->sample_hz = 0u;
-    channel_state->completed_buffers = 0u;
-    channel_state->overrun_count = 0u;
-    memset(channel_state->buffers, 0, sizeof(channel_state->buffers));
-    i2c_trace_packet_builder_discard(&channel_state->packet_builder);
-    i2c_decoder_init(&channel_state->decoder_state);
+    i2c_monitor_reset_channel_capture_state(channel_state, true, 0u);
 }
 
 static void i2c_monitor_release_channel_pins(const i2c_monitor_channel_state_t *channel_state) {
@@ -154,14 +191,18 @@ static bool i2c_monitor_push_trace_packet(void *context, const trace_packet_t *p
 }
 
 static void i2c_monitor_shutdown_channel(i2c_monitor_channel_state_t *channel_state) {
+    uint32_t channel_mask;
+
     if (channel_state->dma_channel < 0) {
         i2c_monitor_release_channel_pins(channel_state);
         i2c_monitor_reset_channel_runtime(channel_state);
         return;
     }
 
+    channel_mask = 1u << (uint32_t)channel_state->dma_channel;
     dma_channel_set_irq0_enabled((uint)channel_state->dma_channel, false);
     dma_channel_abort((uint)channel_state->dma_channel);
+    dma_hw->ints0 = channel_mask;
     dma_channel_unclaim((uint)channel_state->dma_channel);
     pio_sm_set_enabled(i2c_monitor_pio, channel_state->sm, false);
     pio_sm_clear_fifos(i2c_monitor_pio, channel_state->sm);
@@ -182,8 +223,51 @@ static void i2c_monitor_shutdown_all(void) {
     pio_remove_program(i2c_monitor_pio, &i2c_monitor_sampler_program, g_i2c_monitor_program_offset);
 }
 
+static bool i2c_monitor_emit_boundary_event(
+    i2c_monitor_channel_state_t *channel_state,
+    uint8_t event_type,
+    uint8_t event_value
+) {
+    return i2c_trace_packet_builder_append_event(
+        &channel_state->packet_builder,
+        event_type,
+        event_value
+    );
+}
+
+static void i2c_monitor_restart_channel(
+    i2c_monitor_channel_state_t *channel_state,
+    uint8_t logical_channel,
+    uint8_t restart_event_type,
+    uint8_t restart_event_value,
+    uint8_t next_packet_flags
+) {
+    bool overrun = channel_state->overrun;
+    uint32_t overrun_count = channel_state->overrun_count;
+    uint32_t sample_hz = channel_state->sample_hz;
+
+    if (restart_event_type != 0u) {
+        if (!i2c_monitor_emit_boundary_event(channel_state, restart_event_type, restart_event_value)) {
+            overrun = true;
+            overrun_count += 1u;
+            next_packet_flags |= TRACE_FLAG_OVERFLOW;
+        }
+    }
+
+    i2c_monitor_shutdown_channel(channel_state);
+    if ((sample_hz != 0u)
+            && i2c_monitor_start_channel(channel_state, logical_channel, sample_hz)
+            && (next_packet_flags != 0u)) {
+        i2c_trace_packet_builder_mark_next_packet(&channel_state->packet_builder, next_packet_flags);
+    }
+
+    channel_state->overrun = overrun;
+    channel_state->overrun_count = overrun_count;
+}
+
 static void i2c_monitor_handle_decode_result(
     i2c_monitor_channel_state_t *channel_state,
+    uint8_t logical_channel,
     i2c_decoder_result_t result
 ) {
     switch (result) {
@@ -193,14 +277,35 @@ static void i2c_monitor_handle_decode_result(
         case I2C_DECODER_RESULT_SINK_REJECTED:
             channel_state->overrun = true;
             channel_state->overrun_count += 1u;
+            i2c_monitor_restart_channel(
+                channel_state,
+                logical_channel,
+                0u,
+                0u,
+                TRACE_FLAG_OVERFLOW
+            );
             break;
 
         case I2C_DECODER_RESULT_INVALID_INPUT:
-        default:
-            i2c_trace_packet_builder_discard(&channel_state->packet_builder);
-            i2c_trace_packet_builder_mark_next_packet(&channel_state->packet_builder, TRACE_FLAG_ERROR);
-            i2c_decoder_init(&channel_state->decoder_state);
+        default: {
+            bool emitted_error = i2c_monitor_emit_boundary_event(
+                channel_state,
+                I2C_DECODE_EVENT_ERROR,
+                (uint8_t)result
+            );
+
+            if (!emitted_error) {
+                channel_state->overrun = true;
+                channel_state->overrun_count += 1u;
+            }
+
+            i2c_monitor_reset_channel_capture_state(
+                channel_state,
+                false,
+                emitted_error ? 0u : TRACE_FLAG_OVERFLOW
+            );
             break;
+        }
     }
 }
 
@@ -227,26 +332,77 @@ static void i2c_monitor_dma_irq_handler(void) {
 
         completed_buffer = channel_state->active_buffer;
         next_buffer = (uint8_t)(completed_buffer ^ 1u);
-        channel_state->completed_buffers += 1u;
         i2c_monitor_dma_restart(channel_state, next_buffer);
 
         if (!stream_enabled) {
-            i2c_trace_packet_builder_discard(&channel_state->packet_builder);
-            (void)i2c_decoder_process_buffer(
-                &channel_state->decoder_state,
-                channel_state->buffers[completed_buffer],
-                I2C_MONITOR_BUFFER_WORDS,
-                NULL,
-                NULL
+            continue;
+        }
+
+        if (channel_state->staged_buffer_ready) {
+            channel_state->overrun = true;
+            channel_state->overrun_count += 1u;
+            i2c_monitor_restart_channel(
+                channel_state,
+                g_i2c_monitor_logical_channels[channel],
+                I2C_DECODE_EVENT_OVERFLOW,
+                0u,
+                TRACE_FLAG_OVERFLOW
             );
+            continue;
+        }
+
+        memcpy(
+            channel_state->staged_buffer,
+            channel_state->buffers[completed_buffer],
+            sizeof(channel_state->staged_buffer)
+        );
+        channel_state->staged_buffer_ready = true;
+        channel_state->completed_buffers += 1u;
+    }
+}
+
+void i2c_monitor_poll(void) {
+    uint32_t staged_buffer[I2C_MONITOR_BUFFER_WORDS];
+    bool stream_enabled;
+
+    if (!g_i2c_monitor_initialized || g_i2c_monitor_init_failed) {
+        return;
+    }
+
+    stream_enabled = app_control_stream_enabled();
+    if (!stream_enabled) {
+        for (uint32_t channel = 0u; channel < I2C_MONITOR_CHANNEL_COUNT; ++channel) {
+            i2c_monitor_channel_state_t *channel_state = &g_i2c_monitor_channels[channel];
+
+            if (channel_state->dma_channel >= 0) {
+                (void)i2c_monitor_emit_boundary_event(channel_state, I2C_DECODE_EVENT_CONTROL_STOP, 0u);
+                i2c_monitor_shutdown_channel(channel_state);
+            }
+        }
+        return;
+    }
+
+    for (uint32_t channel = 0u; channel < I2C_MONITOR_CHANNEL_COUNT; ++channel) {
+        i2c_monitor_channel_state_t *channel_state = &g_i2c_monitor_channels[channel];
+
+        if (channel_state->dma_channel < 0) {
+            continue;
+        }
+
+        if (!i2c_monitor_take_staged_buffer(
+                channel_state,
+                staged_buffer,
+                I2C_MONITOR_BUFFER_WORDS
+            )) {
             continue;
         }
 
         i2c_monitor_handle_decode_result(
             channel_state,
+            g_i2c_monitor_logical_channels[channel],
             i2c_decoder_process_buffer(
                 &channel_state->decoder_state,
-                channel_state->buffers[completed_buffer],
+                staged_buffer,
                 I2C_MONITOR_BUFFER_WORDS,
                 i2c_trace_packet_builder_capture_event,
                 &channel_state->packet_builder
@@ -328,6 +484,7 @@ static bool i2c_monitor_start_channel(
         I2C_MONITOR_BUFFER_WORDS,
         false
     );
+    dma_hw->ints0 = 1u << (uint32_t)channel_state->dma_channel;
     dma_channel_set_irq0_enabled((uint)channel_state->dma_channel, true);
 
     i2c_monitor_reset_channel_runtime(channel_state);
@@ -340,7 +497,6 @@ static bool i2c_monitor_start_channel(
 /** @copydoc i2c_monitor_init */
 bool i2c_monitor_init(void) {
     uint32_t channel;
-
     if (g_i2c_monitor_initialized) {
         return true;
     }
@@ -360,18 +516,6 @@ bool i2c_monitor_init(void) {
     irq_set_enabled(DMA_IRQ_0, true);
 
     for (channel = 0u; channel < I2C_MONITOR_CHANNEL_COUNT; ++channel) {
-        if (!i2c_trace_packet_builder_init(
-                &g_i2c_monitor_channels[channel].packet_builder,
-                g_i2c_monitor_logical_channels[channel],
-                i2c_monitor_push_trace_packet,
-                NULL,
-                i2c_monitor_timestamp_us
-            )) {
-            i2c_monitor_shutdown_all();
-            g_i2c_monitor_init_failed = true;
-            return false;
-        }
-
         i2c_monitor_release_channel_pins(&g_i2c_monitor_channels[channel]);
         i2c_monitor_reset_channel_runtime(&g_i2c_monitor_channels[channel]);
     }
@@ -382,9 +526,23 @@ bool i2c_monitor_init(void) {
 
 bool i2c_monitor_set_channel_sample_hz(uint32_t channel, uint32_t sample_hz) {
     i2c_monitor_channel_state_t *channel_state = i2c_monitor_get_channel_state(channel);
+    bool was_running;
 
     if ((channel_state == NULL) || !g_i2c_monitor_initialized || g_i2c_monitor_init_failed) {
         return false;
+    }
+
+    was_running = channel_state->running;
+    if (was_running) {
+        uint8_t boundary_event = (sample_hz == 0u)
+            ? I2C_DECODE_EVENT_CONTROL_STOP
+            : I2C_DECODE_EVENT_CONTROL_RECONFIG;
+
+        if (!i2c_monitor_emit_boundary_event(channel_state, boundary_event, 0u)) {
+            channel_state->overrun = true;
+            channel_state->overrun_count += 1u;
+            i2c_trace_packet_builder_mark_next_packet(&channel_state->packet_builder, TRACE_FLAG_OVERFLOW);
+        }
     }
 
     i2c_monitor_shutdown_channel(channel_state);

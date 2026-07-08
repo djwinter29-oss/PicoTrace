@@ -116,7 +116,11 @@ bool i2c_trace_packet_builder_append_event(
     builder->payload_offset += I2C_TRACE_EVENT_BYTES;
     builder->event_count += 1u;
 
-    if (event_type == I2C_DECODE_EVENT_STOP) {
+    if ((event_type == I2C_DECODE_EVENT_STOP)
+            || (event_type == I2C_DECODE_EVENT_ERROR)
+            || (event_type == I2C_DECODE_EVENT_OVERFLOW)
+            || (event_type == I2C_DECODE_EVENT_CONTROL_RECONFIG)
+            || (event_type == I2C_DECODE_EVENT_CONTROL_STOP)) {
         return i2c_trace_packet_builder_flush(builder, true);
     }
 
