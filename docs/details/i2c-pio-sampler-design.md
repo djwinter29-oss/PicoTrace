@@ -17,6 +17,8 @@ This design covers:
 - `firmware/src/trace/capture/i2c_monitor.h`
 - `firmware/src/trace/decode/i2c_decoder.c`
 - `firmware/src/trace/decode/i2c_decoder.h`
+- `firmware/src/trace/decode/i2c_trace_packet.c`
+- `firmware/src/trace/decode/i2c_trace_packet.h`
 - `firmware/src/config/i2c_monitor_config.h`
 
 ## Current Design Choice
@@ -36,6 +38,10 @@ Each I2C channel gets:
 - one two-pin sampling program
 - one DMA channel
 - two ping-pong raw buffers
+
+The sampler now starts idle at boot. A channel begins sampling only when the producer-side control
+path requests a non-zero oversampling rate for that channel. Passing `0` stops that channel and
+resets its decoder, packet builder, DMA state, and pins back to plain input GPIO state.
 
 ## Hardware Mapping Assumption
 
@@ -146,7 +152,7 @@ For each completed DMA buffer:
 
 - `trace/decode/i2c_decoder.c` walks the oversampled `SDA` and `SCL` stream
 - decoded items are reported back to `i2c_monitor.c` as fixed two-byte event/value pairs
-- the monitor appends those pairs into the channel's open trace packet
+- `trace/decode/i2c_trace_packet.c` appends those pairs into the channel's open trace packet
 - if the packet fills before the I2C transaction ends, it is pushed immediately and a continuation
     packet is opened for the same transaction on the next emitted item
 - if a `STOP` event is decoded, the current packet is pushed as the end of that I2C transaction
@@ -158,7 +164,7 @@ That means the current implementation proves:
 - DMA fills alternating ping-pong buffers
 - oversampled ping-pong buffers are decoded into I2C events
 - partial packet state survives across DMA IRQs until a transaction ends or a packet fills
-- `usb_stream_poll()` can drain those decoded packets before falling back to the placeholder stream
+- `usb_bulk_poll_stream()` can drain those decoded packets onto the vendor bulk interface when they are available
 
 It still does not prove:
 
@@ -167,27 +173,30 @@ It still does not prove:
 
 ## Sample Rate Model
 
-Each channel has an independent `sample_hz` in `i2c_monitor_channel_config_t`.
+Each channel has an independent runtime `sample_hz` selected when that channel is started.
 
-The default is:
+The recommended default for a caller that wants a simple starting point is:
 
 - `I2C_MONITOR_DEFAULT_SAMPLE_HZ = 8000000`
 
-This was chosen as a more comfortable starting point for 400 kHz passive observation than 4 MHz,
-while still keeping the scaffold simple.
-
-Because channels are independent, setup code may lower the sample rate for known 100 kHz buses or
-disable unused channels entirely.
+This remains a comfortable starting point for 400 kHz passive observation while still keeping the
+scaffold simple. Because channels are independent, control code may choose different oversampling
+rates per channel or stop unused channels entirely by passing `0`.
 
 ## Overrun Handling
 
 The current scaffold tracks packet-emission failures per channel.
 
 If the decoder or packet appender cannot push a completed packet fragment into the trace ring, the
-current transaction fragment is dropped and the channel overrun count is incremented.
+current transaction fragment is dropped, a sticky channel overrun flag is set, and the channel
+overrun count is incremented.
 
 This remains a capture-first choice: preserving continuity of the DMA sample pipeline is treated as
 more important than preserving every decoded fragment when the ring cannot accept output.
+
+The current implementation does not overwrite already-queued ring packets on overrun. That would
+conflict with the current zero-copy USB consumer, which may hold a borrowed pointer into the oldest
+ring slot across partial USB writes.
 
 ## Why This Stops Before Decode
 
@@ -235,9 +244,23 @@ packet fragment.
 These are decoded event fragments, not final transaction summaries. They keep the producer-to-
 consumer ownership model real while still leaving room for a later higher-level transaction packer.
 
+## Current Core Ownership
+
+The current firmware now splits ownership across the RP2040 cores:
+
+- core `0` owns `tud_task()`, CDC, HID, and vendor bulk transmit
+- core `1` owns capture-side bring-up and the DMA IRQ path that decodes and produces trace packets
+- the singleton trace ring under `firmware/src/trace/` remains the ownership boundary between them
+
+The runtime channel control API is also owned by core `1`. If a USB-side command path needs to
+start, stop, or retune one monitor channel, it should forward that request onto the producer core
+instead of touching the monitor directly from core `0`.
+
+This keeps all TinyUSB interaction on one core while allowing the producer side to run without USB
+service work in the same loop.
+
 ## Known Limitations Of The Current Scaffold
 
-- no multicore split yet; the current scaffold is initialized from the existing main loop
 - one DMA channel per monitored I2C channel, restarted from the DMA IRQ handler
 - ring packets currently carry decoded event fragments rather than final transaction summaries
 - decode and packet append work currently execute in the DMA IRQ path

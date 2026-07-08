@@ -12,13 +12,17 @@ enable_testing()
 
 add_executable(usb_app_test
     ../src/app_control.c
+    app_control_test.c
     ../src/cli/cli_shell.c
     ../src/cli/device_cli.c
+    trace/decode/i2c_decoder_test.c
+    trace/decode/i2c_trace_packet_test.c
     usb_app_test.c
     ../src/driver/system.c
+    ../src/trace/capture/i2c_monitor_control.c
     ../src/trace/decode/i2c_decoder.c
+    ../src/trace/decode/i2c_trace_packet.c
     ../src/trace/trace_ring.c
-    ../src/usb_stream.c
     ../src/usb/usb_bulk.c
     ../src/usb/usb_cdc.c
     ../src/usb/usb_hid.c
@@ -27,6 +31,7 @@ add_executable(usb_app_test
 target_include_directories(usb_app_test
     PRIVATE
         .
+    stubs
         ../src
         ../src/config
 )

@@ -6,6 +6,7 @@
 
 bool usb_bulk_write(const uint8_t *data, uint32_t length);
 uint32_t usb_bulk_stream_write(const uint8_t *data, uint32_t length);
+void usb_bulk_poll_stream(bool enabled);
 void usb_bulk_flush(void);
 
 #endif

@@ -3,7 +3,7 @@
 #include "driver/led.h"
 #include "driver/system.h"
 
-static bool app_control_stream_on = true;
+static volatile bool app_control_stream_on = true;
 static bool app_control_led_on;
 
 void app_control_init(void) {

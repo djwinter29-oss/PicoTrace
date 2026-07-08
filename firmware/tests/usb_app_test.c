@@ -6,21 +6,17 @@
 #include "tusb.h"
 
 #include "app_control.h"
+#include "app_control_test.h"
 #include "cli/device_cli.h"
 #include "driver/system.h"
-#include "trace/decode/i2c_decoder.h"
+#include "test_support.h"
+#include "trace/capture/i2c_monitor_control.h"
+#include "trace/decode/i2c_decoder_test.h"
+#include "trace/decode/i2c_trace_packet_test.h"
 #include "trace/trace_ring.h"
-#include "usb_stream.h"
 #include "usb/usb_cdc.h"
 #include "usb/usb_bulk.h"
 #include "usb/usb_hid.h"
-
-#define TEST_BULK_FRAME_SIZE 4096u
-#define TEST_BULK_PATTERN_SIZE 8u
-
-static const uint8_t test_bulk_pattern[TEST_BULK_PATTERN_SIZE] = {
-    'S', 'T', 'R', 'M', 0xA5u, 0x5Au, 0xC3u, 0x3Cu,
-};
 
 static bool stub_ready = true;
 static bool stub_cdc_connected = true;
@@ -42,6 +38,11 @@ static uint32_t stub_watchdog_reboot_sp;
 static uint32_t stub_watchdog_reboot_delay_ms;
 static bool stub_led_state;
 static uint32_t stub_led_set_calls;
+static uint32_t stub_monitor_sample_hz[4];
+static bool stub_monitor_running[4];
+static bool stub_monitor_overrun[4];
+static uint32_t stub_monitor_completed_buffers[4];
+static uint32_t stub_monitor_overrun_count[4];
 
 static uint32_t test_cli_read(void *context, uint8_t *data, uint32_t capacity) {
     (void)context;
@@ -135,7 +136,38 @@ void led_set(bool on) {
     stub_led_set_calls += 1u;
 }
 
-static void reset_usb_stub(void) {
+static bool stub_monitor_set_channel_sample_hz(uint32_t channel, uint32_t sample_hz) {
+    if (channel >= 4u) {
+        return false;
+    }
+
+    stub_monitor_sample_hz[channel] = sample_hz;
+    stub_monitor_running[channel] = (sample_hz != 0u);
+    if (sample_hz == 0u) {
+        stub_monitor_completed_buffers[channel] = 0u;
+        stub_monitor_overrun[channel] = false;
+        stub_monitor_overrun_count[channel] = 0u;
+    }
+
+    return true;
+}
+
+static bool stub_monitor_get_channel_status(uint32_t channel, i2c_monitor_channel_status_t *status_out) {
+    if ((channel >= 4u) || (status_out == NULL)) {
+        return false;
+    }
+
+    memset(status_out, 0, sizeof(*status_out));
+    status_out->initialized = true;
+    status_out->running = stub_monitor_running[channel];
+    status_out->overrun = stub_monitor_overrun[channel];
+    status_out->sample_hz = stub_monitor_sample_hz[channel];
+    status_out->completed_buffers = stub_monitor_completed_buffers[channel];
+    status_out->overrun_count = stub_monitor_overrun_count[channel];
+    return true;
+}
+
+void reset_usb_stub(void) {
     stub_ready = true;
     stub_cdc_connected = true;
     stub_cdc_rx_length = 0u;
@@ -155,32 +187,51 @@ static void reset_usb_stub(void) {
     stub_watchdog_reboot_delay_ms = 0u;
     stub_led_state = false;
     stub_led_set_calls = 0u;
+    memset(stub_monitor_sample_hz, 0, sizeof(stub_monitor_sample_hz));
+    memset(stub_monitor_running, 0, sizeof(stub_monitor_running));
+    memset(stub_monitor_overrun, 0, sizeof(stub_monitor_overrun));
+    memset(stub_monitor_completed_buffers, 0, sizeof(stub_monitor_completed_buffers));
+    memset(stub_monitor_overrun_count, 0, sizeof(stub_monitor_overrun_count));
     memset(stub_vendor_tx_data, 0, sizeof(stub_vendor_tx_data));
     app_control_init();
+    i2c_monitor_control_init();
+    i2c_monitor_control_bind_executor(
+        stub_monitor_set_channel_sample_hz,
+        stub_monitor_get_channel_status
+    );
+    i2c_monitor_control_set_inline_mode(true);
     stub_led_set_calls = 0u;
     device_cli_init(&test_device_cli_transport);
+}
+
+uint32_t test_stub_led_set_calls(void) {
+    return stub_led_set_calls;
+}
+
+bool test_stub_led_state(void) {
+    return stub_led_state;
+}
+
+uint32_t test_stub_watchdog_reboot_calls(void) {
+    return stub_watchdog_reboot_calls;
+}
+
+uint32_t test_stub_watchdog_reboot_pc(void) {
+    return stub_watchdog_reboot_pc;
+}
+
+uint32_t test_stub_watchdog_reboot_sp(void) {
+    return stub_watchdog_reboot_sp;
+}
+
+uint32_t test_stub_watchdog_reboot_delay_ms(void) {
+    return stub_watchdog_reboot_delay_ms;
 }
 
 static void load_cdc_rx(const uint8_t *data, uint32_t length) {
     memcpy(stub_cdc_rx_data, data, length);
     stub_cdc_rx_length = length;
     stub_cdc_rx_offset = 0u;
-}
-
-static void assert_vendor_pattern(const uint8_t *data, uint32_t length) {
-    uint32_t offset;
-
-    for (offset = 0u; offset < length; offset += TEST_BULK_PATTERN_SIZE) {
-        assert(memcmp(&data[offset], test_bulk_pattern, TEST_BULK_PATTERN_SIZE) == 0);
-    }
-}
-
-static void fill_test_bulk_frame(uint8_t *data, uint32_t length) {
-    uint32_t offset;
-
-    for (offset = 0u; offset < length; offset += TEST_BULK_PATTERN_SIZE) {
-        memcpy(&data[offset], test_bulk_pattern, TEST_BULK_PATTERN_SIZE);
-    }
 }
 
 static void test_cli_unknown_command_writes_fixed_helper(void) {
@@ -278,6 +329,37 @@ static void test_cli_reboot_command_uses_system_reboot(void) {
     assert(stub_watchdog_reboot_calls == 1u);
     assert(stub_cdc_tx_length == 0u);
     assert(stub_cdc_flush_calls == 0u);
+}
+
+static void test_cli_i2cmon_command_updates_monitor_channel(void) {
+    static const uint8_t payload[] = {'i','2','c','m','o','n',' ','2',' ','8','0','0','0','0','0','0','\r'};
+
+    reset_usb_stub();
+    load_cdc_rx(payload, sizeof(payload));
+
+    tud_cdc_rx_cb(0u);
+    device_cli_poll();
+
+    assert(stub_monitor_running[2] == true);
+    assert(stub_monitor_sample_hz[2] == 8000000u);
+    assert(strstr((const char *)stub_cdc_tx_data, "i2cmon ch2 running hz=8000000") != NULL);
+}
+
+static void test_cli_i2cmon_status_reports_channel_state(void) {
+    static const uint8_t payload[] = {'i','2','c','m','o','n',' ','s','t','a','t','u','s',' ','1','\r'};
+
+    reset_usb_stub();
+    stub_monitor_running[1] = true;
+    stub_monitor_sample_hz[1] = 4000000u;
+    stub_monitor_completed_buffers[1] = 12u;
+    stub_monitor_overrun[1] = true;
+    stub_monitor_overrun_count[1] = 3u;
+    load_cdc_rx(payload, sizeof(payload));
+
+    tud_cdc_rx_cb(0u);
+    device_cli_poll();
+
+    assert(strstr((const char *)stub_cdc_tx_data, "i2cmon ch1 running hz=4000000 buffers=12 overruns=3 sticky=1") != NULL);
 }
 
 static void test_hid_reboot_command_runs_once(void) {
@@ -447,106 +529,7 @@ static void test_trace_ring_reports_full_and_counts_drop(void) {
     assert(trace_ring_high_watermark() == TRACE_RING_CAPACITY);
 }
 
-static void append_i2c_sample(uint8_t *samples, uint32_t *sample_count, bool sda, bool scl, uint32_t repeats) {
-    uint8_t encoded = (uint8_t)((sda ? 0x01u : 0u) | (scl ? 0x02u : 0u));
-
-    for (uint32_t index = 0u; index < repeats; ++index) {
-        samples[*sample_count] = encoded;
-        *sample_count += 1u;
-    }
-}
-
-static void append_i2c_bit(uint8_t *samples, uint32_t *sample_count, uint8_t bit_value) {
-    append_i2c_sample(samples, sample_count, bit_value != 0u, false, 2u);
-    append_i2c_sample(samples, sample_count, bit_value != 0u, true, 2u);
-    append_i2c_sample(samples, sample_count, bit_value != 0u, false, 2u);
-}
-
-static uint32_t pack_i2c_samples(uint32_t *raw_words, uint32_t raw_capacity, const uint8_t *samples, uint32_t sample_count) {
-    uint32_t word_count = (sample_count + 15u) / 16u;
-
-    assert(word_count <= raw_capacity);
-    memset(raw_words, 0, raw_capacity * sizeof(raw_words[0]));
-
-    for (uint32_t sample_index = 0u; sample_index < sample_count; ++sample_index) {
-        uint32_t word_index = sample_index / 16u;
-        uint32_t shift = 30u - ((sample_index & 0x0Fu) * 2u);
-        raw_words[word_index] |= ((uint32_t)(samples[sample_index] & 0x03u) << shift);
-    }
-
-    return word_count;
-}
-
-typedef struct {
-    i2c_decode_event_t events[32];
-    uint32_t count;
-} test_i2c_event_capture_t;
-
-static bool capture_i2c_event(void *context, uint8_t event_type, uint8_t event_value) {
-    test_i2c_event_capture_t *capture = (test_i2c_event_capture_t *)context;
-
-    assert(capture->count < 32u);
-    capture->events[capture->count].type = event_type;
-    capture->events[capture->count].value = event_value;
-    capture->count += 1u;
-    return true;
-}
-
-static void test_i2c_decoder_emits_events_from_oversampled_buffer(void) {
-    i2c_decoder_state_t decoder_state;
-    uint8_t samples[256];
-    uint32_t raw_words[16];
-    uint32_t sample_count = 0u;
-    uint32_t raw_word_count;
-    test_i2c_event_capture_t capture = {0};
-
-    reset_usb_stub();
-    i2c_decoder_init(&decoder_state);
-
-    append_i2c_sample(samples, &sample_count, true, true, 3u);
-    append_i2c_sample(samples, &sample_count, false, true, 3u);
-
-    append_i2c_bit(samples, &sample_count, 1u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 1u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 0u);
-
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 1u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 1u);
-    append_i2c_bit(samples, &sample_count, 1u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 1u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 0u);
-
-    append_i2c_sample(samples, &sample_count, false, false, 2u);
-    append_i2c_sample(samples, &sample_count, false, true, 2u);
-    append_i2c_sample(samples, &sample_count, true, true, 3u);
-
-    raw_word_count = pack_i2c_samples(raw_words, 16u, samples, sample_count);
-
-    assert(i2c_decoder_process_buffer(&decoder_state, raw_words, raw_word_count, capture_i2c_event, &capture) == true);
-    assert(capture.count == 6u);
-    assert(capture.events[0].type == I2C_DECODE_EVENT_START);
-    assert(capture.events[1].type == I2C_DECODE_EVENT_DATA);
-    assert(capture.events[1].value == 0xA0u);
-    assert(capture.events[2].type == I2C_DECODE_EVENT_ACK);
-    assert(capture.events[2].value == 0u);
-    assert(capture.events[3].type == I2C_DECODE_EVENT_DATA);
-    assert(capture.events[3].value == 0x5Au);
-    assert(capture.events[4].type == I2C_DECODE_EVENT_ACK);
-    assert(capture.events[4].value == 0u);
-    assert(capture.events[5].type == I2C_DECODE_EVENT_STOP);
-}
-
-static void test_usb_stream_drains_trace_packet_before_placeholder(void) {
+static void test_usb_bulk_poll_stream_drains_trace_packet(void) {
     trace_packet_t packet = make_test_trace_packet(31u);
     uint32_t packet_bytes = TRACE_PACKET_HEADER_BYTES + packet.header.payload_len;
 
@@ -554,7 +537,7 @@ static void test_usb_stream_drains_trace_packet_before_placeholder(void) {
     trace_ring_init();
 
     assert(trace_ring_push(&packet) == true);
-    usb_stream_poll(app_control_stream_enabled(), usb_bulk_stream_write);
+    usb_bulk_poll_stream(app_control_stream_enabled());
     usb_bulk_flush();
 
     assert(stub_vendor_tx_length == packet_bytes);
@@ -563,7 +546,7 @@ static void test_usb_stream_drains_trace_packet_before_placeholder(void) {
     assert(stub_vendor_flush_calls == 1u);
 }
 
-static void test_usb_stream_resumes_partial_trace_packet_write(void) {
+static void test_usb_bulk_poll_stream_resumes_partial_trace_packet_write(void) {
     trace_packet_t packet = make_test_trace_packet(41u);
     uint32_t packet_bytes = TRACE_PACKET_HEADER_BYTES + packet.header.payload_len;
 
@@ -572,12 +555,12 @@ static void test_usb_stream_resumes_partial_trace_packet_write(void) {
 
     assert(trace_ring_push(&packet) == true);
     stub_vendor_available = 8u;
-    usb_stream_poll(app_control_stream_enabled(), usb_bulk_stream_write);
+    usb_bulk_poll_stream(app_control_stream_enabled());
     assert(stub_vendor_tx_length == 8u);
     assert(trace_ring_available() == 1u);
 
     stub_vendor_available = sizeof(stub_vendor_tx_data) - stub_vendor_tx_length;
-    usb_stream_poll(app_control_stream_enabled(), usb_bulk_stream_write);
+    usb_bulk_poll_stream(app_control_stream_enabled());
     usb_bulk_flush();
 
     assert(stub_vendor_tx_length == packet_bytes);
@@ -585,25 +568,28 @@ static void test_usb_stream_resumes_partial_trace_packet_write(void) {
     assert(trace_ring_available() == 0u);
 }
 
-static void test_poll_emits_example_frame(void) {
+static void test_usb_bulk_poll_stream_emits_nothing_when_ring_empty(void) {
     reset_usb_stub();
-    usb_stream_poll(app_control_stream_enabled(), usb_bulk_stream_write);
+    usb_bulk_poll_stream(app_control_stream_enabled());
     usb_bulk_flush();
-    assert(stub_vendor_tx_length == sizeof(stub_vendor_tx_data));
+
+    assert(stub_vendor_tx_length == 0u);
     assert(stub_vendor_flush_calls == 1u);
-    assert_vendor_pattern(stub_vendor_tx_data, stub_vendor_tx_length);
 }
 
 static void test_stream_write_uses_partial_vendor_space(void) {
-    uint8_t frame[TEST_BULK_FRAME_SIZE];
+    uint8_t frame[1024];
+    uint32_t index;
 
     reset_usb_stub();
     stub_vendor_available = 512u;
-    fill_test_bulk_frame(frame, sizeof(frame));
+    for (index = 0u; index < sizeof(frame); ++index) {
+        frame[index] = (uint8_t)(index & 0xFFu);
+    }
 
     assert(usb_bulk_stream_write(frame, sizeof(frame)) == 512u);
     assert(stub_vendor_tx_length == 512u);
-    assert_vendor_pattern(stub_vendor_tx_data, stub_vendor_tx_length);
+    assert(memcmp(stub_vendor_tx_data, frame, stub_vendor_tx_length) == 0);
     assert(stub_vendor_available == 0u);
 }
 
@@ -654,26 +640,130 @@ static void test_hid_stream_command_updates_shared_state(void) {
     assert(response.status == USB_HID_STATUS_OK);
 }
 
+static void test_hid_i2c_monitor_set_rate_updates_channel(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+
+    reset_usb_stub();
+    command.opcode = USB_HID_OPCODE_I2C_MONITOR_SET_RATE;
+    command.sequence = 4u;
+    command.payload_length = 5u;
+    command.payload[0] = 3u;
+    command.payload[1] = 0x00u;
+    command.payload[2] = 0x12u;
+    command.payload[3] = 0x7Au;
+    command.payload[4] = 0x00u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    assert(stub_monitor_running[3] == true);
+    assert(stub_monitor_sample_hz[3] == 8000000u);
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_I2C_MONITOR_SET_RATE);
+    assert(response.status == USB_HID_STATUS_OK);
+}
+
+static void test_hid_i2c_monitor_get_status_returns_payload(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+
+    reset_usb_stub();
+    stub_monitor_running[0] = true;
+    stub_monitor_overrun[0] = true;
+    stub_monitor_sample_hz[0] = 2000000u;
+    stub_monitor_completed_buffers[0] = 9u;
+    stub_monitor_overrun_count[0] = 2u;
+    command.opcode = USB_HID_OPCODE_I2C_MONITOR_GET_STATUS;
+    command.sequence = 5u;
+    command.payload_length = 1u;
+    command.payload[0] = 0u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_I2C_MONITOR_GET_STATUS);
+    assert(response.status == USB_HID_STATUS_OK);
+    assert(response.payload_length == 16u);
+    assert(response.payload[0] == 0u);
+    assert(response.payload[1] == 1u);
+    assert(response.payload[2] == 1u);
+    assert(response.payload[3] == 1u);
+    assert(response.payload[4] == 0x80u);
+    assert(response.payload[5] == 0x84u);
+    assert(response.payload[6] == 0x1Eu);
+    assert(response.payload[7] == 0x00u);
+    assert(response.payload[8] == 9u);
+    assert(response.payload[12] == 2u);
+}
+
+static void test_hid_i2c_monitor_get_all_status_returns_all_channels(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+
+    reset_usb_stub();
+    stub_monitor_running[0] = true;
+    stub_monitor_sample_hz[0] = 1000000u;
+    stub_monitor_overrun_count[0] = 1u;
+    stub_monitor_running[2] = true;
+    stub_monitor_overrun[2] = true;
+    stub_monitor_sample_hz[2] = 8000000u;
+    stub_monitor_overrun_count[2] = 4u;
+    command.opcode = USB_HID_OPCODE_I2C_MONITOR_GET_ALL_STATUS;
+    command.sequence = 6u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_I2C_MONITOR_GET_ALL_STATUS);
+    assert(response.status == USB_HID_STATUS_OK);
+    assert(response.payload_length == 48u);
+    assert(response.payload[0] == 0u);
+    assert(response.payload[2] == 1u);
+    assert(response.payload[4] == 0x40u);
+    assert(response.payload[5] == 0x42u);
+    assert(response.payload[6] == 0x0Fu);
+    assert(response.payload[7] == 0x00u);
+    assert(response.payload[8] == 1u);
+    assert(response.payload[24] == 2u);
+    assert(response.payload[26] == 1u);
+    assert(response.payload[27] == 1u);
+    assert(response.payload[28] == 0x00u);
+    assert(response.payload[29] == 0x12u);
+    assert(response.payload[30] == 0x7Au);
+    assert(response.payload[31] == 0x00u);
+    assert(response.payload[32] == 4u);
+}
+
 int main(void) {
     test_cli_unknown_command_writes_fixed_helper();
     test_cli_help_writes_response_without_connected_flag();
     test_cli_help_is_flushed_after_temporary_tx_backpressure();
     test_cli_led_command_and_hid_led_command_share_action();
     test_cli_reboot_command_uses_system_reboot();
+    test_cli_i2cmon_command_updates_monitor_channel();
+    test_cli_i2cmon_status_reports_channel_state();
+    run_app_control_tests();
     test_system_reboot_uses_watchdog_reboot();
     test_system_board_family_reports_supported_family();
     test_trace_ring_push_and_pop_packet();
     test_trace_ring_pop_copy_returns_owned_packet();
     test_trace_ring_pop_copy_advances_past_peeked_packet();
     test_trace_ring_reports_full_and_counts_drop();
-    test_i2c_decoder_emits_events_from_oversampled_buffer();
-    test_usb_stream_drains_trace_packet_before_placeholder();
-    test_usb_stream_resumes_partial_trace_packet_write();
-    test_poll_emits_example_frame();
+    run_i2c_decoder_tests();
+    run_i2c_trace_packet_tests();
+    test_usb_bulk_poll_stream_drains_trace_packet();
+    test_usb_bulk_poll_stream_resumes_partial_trace_packet_write();
+    test_usb_bulk_poll_stream_emits_nothing_when_ring_empty();
     test_stream_write_uses_partial_vendor_space();
     test_vendor_write_uses_bulk_in_interface();
     test_hid_builtin_command_returns_status_response();
     test_hid_stream_command_updates_shared_state();
+    test_hid_i2c_monitor_set_rate_updates_channel();
+    test_hid_i2c_monitor_get_status_returns_payload();
+    test_hid_i2c_monitor_get_all_status_returns_all_channels();
     test_hid_reboot_command_runs_once();
     return 0;
 }

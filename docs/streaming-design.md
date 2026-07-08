@@ -40,16 +40,21 @@ This keeps low-rate control traffic from stealing too much time from streaming.
 
 ## Upgrade path
 
-The current stream path uses a fixed placeholder frame in some paths. PicoTrace should continue to
-move toward a buffer-backed producer/consumer path rather than layering more policy onto the
-placeholder loop.
+The current stream path is now a direct buffer-backed producer/consumer path. PicoTrace does not
+emit placeholder vendor traffic when no trace packets are queued.
+
+The current firmware now keeps the consumer side directly in `firmware/src/usb/usb_bulk.c`:
+
+- `usb_bulk_poll_stream()` drains completed `trace_packet_t` records from the trace ring
+- partial USB writes retain the peeked ring slot until the full logical packet has been sent
+- no vendor data is emitted when the ring is empty
 
 The current I2C monitor scaffold now establishes the capture-side buffer boundary for that upgrade:
 
 - one PIO state machine per I2C channel
 - one DMA channel per sampler
 - ping-pong word buffers per channel
-- software polling of completed buffers before protocol decode and packetization
+- DMA IRQ decode and packetization on the producer core before queueing into the trace ring
 
 ## Packet-oriented trace queues
 

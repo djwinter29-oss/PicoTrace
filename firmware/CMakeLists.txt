@@ -19,9 +19,10 @@ add_executable(picotrace
     src/driver/led.c
     src/driver/system.c
     src/trace/decode/i2c_decoder.c
+    src/trace/decode/i2c_trace_packet.c
     src/trace/capture/i2c_monitor.c
+    src/trace/capture/i2c_monitor_control.c
     src/trace/trace_ring.c
-    src/usb_stream.c
     src/usb/usb_bulk.c
     src/usb/usb_cdc.c
     src/usb/usb_hid.c
@@ -41,9 +42,10 @@ target_link_libraries(picotrace
     hardware_gpio
     hardware_irq
     hardware_pio
-        pico_stdlib
-        tinyusb_device
-        tinyusb_board
+    pico_multicore
+    pico_stdlib
+    tinyusb_device
+    tinyusb_board
 )
 
 pico_generate_pio_header(picotrace ${CMAKE_CURRENT_LIST_DIR}/src/trace/capture/i2c_monitor.pio)
