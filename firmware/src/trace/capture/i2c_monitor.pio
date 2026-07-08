@@ -1,0 +1,36 @@
+; @file i2c_monitor.pio
+; @brief Minimal two-pin PIO sampler for one passive I2C channel.
+;
+; The sampler shifts one SDA/SCL snapshot per instruction and relies on autopush at 32 bits so DMA
+; receives packed 32-bit words containing 16 consecutive 2-bit samples.
+
+.program i2c_monitor_sampler
+
+.wrap_target
+    in pins, 2
+.wrap
+
+% c-sdk {
+/**
+ * @brief Initialize one state machine for two-pin I2C sampling.
+ * @param pio Owning PIO instance.
+ * @param sm State machine index used for the channel.
+ * @param offset Program offset returned by @c pio_add_program.
+ * @param pin_base SDA GPIO number. SCL is expected on @p pin_base + 1.
+ * @param clkdiv State machine clock divider that sets the sample rate.
+ */
+static inline void i2c_monitor_sampler_program_init(PIO pio, uint sm, uint offset, uint pin_base, float clkdiv) {
+    pio_sm_config config = i2c_monitor_sampler_program_get_default_config(offset);
+
+    sm_config_set_in_pins(&config, pin_base);
+    sm_config_set_clkdiv(&config, clkdiv);
+    sm_config_set_in_shift(&config, false, true, 32u);
+
+    pio_gpio_init(pio, pin_base);
+    pio_gpio_init(pio, pin_base + 1u);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_base, 2u, false);
+    pio_sm_init(pio, sm, offset, &config);
+    pio_sm_clear_fifos(pio, sm);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

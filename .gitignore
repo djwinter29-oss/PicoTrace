@@ -35,6 +35,7 @@
 *.i*86
 *.x86_64
 *.hex
+*.uf2
 
 # Debug files
 *.dSYM/
@@ -53,3 +54,27 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Build output
+build/
+
+# Python virtual environments
+.venv/
+__pycache__/
+*.egg-info/
+host/python/.venv*/
+
+# .NET build output
+bin/
+obj/
+
+# User-specific IDE files
+*.user
+*.rsuser
+*.suo
+
+# Test results
+TestResults/
+
+# Local Windows script configuration
+tools/windows/.env.ps1
