@@ -8,6 +8,13 @@ packetization.
 The focus here is the capture boundary from SPI clocked sampling into logical trace packets that
 can be pushed into the shared trace ring.
 
+## Related Architecture
+
+For the higher-level component view around this design, see:
+
+- [../architecture/firmware-architecture.md](../architecture/firmware-architecture.md)
+- [../architecture/interface-and-synchronization.md](../architecture/interface-and-synchronization.md)
+
 ## Scope
 
 This design covers the SPI capture implementation scaffold under `firmware/src/trace/capture/`.

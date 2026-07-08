@@ -9,6 +9,13 @@ It focuses on the current PicoTrace implementation, not on a hypothetical future
 to explain the data structures, ownership rules, memory-ordering model, and API contract that make
 the current single-producer, single-consumer trace path safe and predictable.
 
+## Related Architecture
+
+For the higher-level component view around this design, see:
+
+- [../architecture/firmware-architecture.md](../architecture/firmware-architecture.md)
+- [../architecture/interface-and-synchronization.md](../architecture/interface-and-synchronization.md)
+
 ## Design Scope
 
 This design covers:

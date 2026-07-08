@@ -43,6 +43,14 @@ usually less reliable than keeping USB ownership on one core and handing off dat
 - `firmware/src/usb/usb_descriptors.c`: USB device, interface, and string descriptor definitions
 - `tools/`: helper scripts for build, flash, and host-side CDC testing
 - `docs/`: short project notes covering trace transport and capture design
+- `docs/README.md`: documentation index covering architecture, detail design, and hardware/setup notes
+
+## Architecture documents
+
+- `docs/architecture/README.md`: entry point for architecture-level design notes
+- `docs/architecture/firmware-architecture.md`: top-level firmware architecture, core split, and component interaction diagrams
+- `docs/architecture/interface-and-synchronization.md`: interface boundaries, synchronization mechanisms, and race-avoidance strategy
+- `docs/details/`: component-level detail design notes that support the architecture view
 
 ## Streaming design
 

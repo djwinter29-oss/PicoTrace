@@ -8,6 +8,13 @@ decode, and trace packetization.
 The focus here is the capture boundary from PIO sampling into per-channel ping-pong DMA buffers,
 then into a per-channel decoder state and a persistent per-channel trace packet buffer.
 
+## Related Architecture
+
+For the higher-level component view around this design, see:
+
+- [../architecture/firmware-architecture.md](../architecture/firmware-architecture.md)
+- [../architecture/interface-and-synchronization.md](../architecture/interface-and-synchronization.md)
+
 ## Scope
 
 This design covers:
