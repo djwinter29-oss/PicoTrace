@@ -11,6 +11,7 @@
 #include "driver/system.h"
 #include "test_support.h"
 #include "trace/capture/i2c_monitor_control.h"
+#include "trace/capture/spi_monitor_control.h"
 #include "trace/decode/i2c_decoder_test.h"
 #include "trace/decode/i2c_trace_packet_test.h"
 #include "trace/trace_ring.h"
@@ -44,6 +45,13 @@ static bool stub_monitor_overrun[4];
 static uint32_t stub_monitor_completed_buffers[4];
 static uint32_t stub_monitor_overrun_count[4];
 static i2c_monitor_rc_t stub_monitor_result = I2C_MONITOR_RC_OK;
+static spi_monitor_capture_t stub_spi_capture[6];
+static uint8_t stub_spi_mode[6];
+static uint32_t stub_spi_timeout_us[6];
+static uint32_t stub_spi_packets_emitted[6];
+static uint32_t stub_spi_overrun_count[6];
+static bool stub_spi_running[6];
+static spi_monitor_rc_t stub_spi_monitor_result = SPI_MONITOR_RC_OK;
 
 static uint32_t test_cli_read(void *context, uint8_t *data, uint32_t capacity) {
     (void)context;
@@ -196,6 +204,69 @@ static i2c_monitor_rc_t stub_monitor_get_all_status(i2c_monitor_channel_status_t
     return I2C_MONITOR_RC_OK;
 }
 
+static spi_monitor_rc_t stub_spi_monitor_set_channel_config(uint32_t channel, const spi_monitor_channel_config_t *config) {
+    if (stub_spi_monitor_result != SPI_MONITOR_RC_OK) {
+        return stub_spi_monitor_result;
+    }
+
+    if ((channel >= 6u) || (config == NULL)) {
+        return SPI_MONITOR_RC_INVALID;
+    }
+
+    stub_spi_capture[channel] = config->capture;
+    stub_spi_mode[channel] = config->spi_mode;
+    stub_spi_timeout_us[channel] = (config->timeout_us != 0u) ? config->timeout_us : SPI_MONITOR_TIMEOUT_US_DEFAULT;
+    stub_spi_running[channel] = (config->capture != SPI_MONITOR_CAPTURE_DISABLED);
+    if (!stub_spi_running[channel]) {
+        stub_spi_timeout_us[channel] = 0u;
+        stub_spi_packets_emitted[channel] = 0u;
+        stub_spi_overrun_count[channel] = 0u;
+    }
+
+    return SPI_MONITOR_RC_OK;
+}
+
+static spi_monitor_rc_t stub_spi_monitor_get_channel_status(uint32_t channel, spi_monitor_channel_status_t *status_out) {
+    if ((channel >= 6u) || (status_out == NULL)) {
+        return SPI_MONITOR_RC_INVALID;
+    }
+
+    memset(status_out, 0, sizeof(*status_out));
+    status_out->initialized = true;
+    status_out->running = stub_spi_running[channel];
+    status_out->capture = stub_spi_capture[channel];
+    status_out->spi_mode = stub_spi_mode[channel];
+    status_out->timeout_us = stub_spi_timeout_us[channel];
+    status_out->packets_emitted = stub_spi_packets_emitted[channel];
+    status_out->overrun_count = stub_spi_overrun_count[channel];
+    return SPI_MONITOR_RC_OK;
+}
+
+static spi_monitor_rc_t stub_spi_monitor_get_all_status(spi_monitor_channel_status_t *status_out) {
+    uint32_t channel;
+
+    if (stub_spi_monitor_result != SPI_MONITOR_RC_OK) {
+        return stub_spi_monitor_result;
+    }
+
+    if (status_out == NULL) {
+        return SPI_MONITOR_RC_INVALID;
+    }
+
+    for (channel = 0u; channel < 6u; ++channel) {
+        memset(&status_out[channel], 0, sizeof(status_out[channel]));
+        status_out[channel].initialized = true;
+        status_out[channel].running = stub_spi_running[channel];
+        status_out[channel].capture = stub_spi_capture[channel];
+        status_out[channel].spi_mode = stub_spi_mode[channel];
+        status_out[channel].timeout_us = stub_spi_timeout_us[channel];
+        status_out[channel].packets_emitted = stub_spi_packets_emitted[channel];
+        status_out[channel].overrun_count = stub_spi_overrun_count[channel];
+    }
+
+    return SPI_MONITOR_RC_OK;
+}
+
 void reset_usb_stub(void) {
     stub_ready = true;
     stub_cdc_connected = true;
@@ -222,15 +293,29 @@ void reset_usb_stub(void) {
     memset(stub_monitor_completed_buffers, 0, sizeof(stub_monitor_completed_buffers));
     memset(stub_monitor_overrun_count, 0, sizeof(stub_monitor_overrun_count));
     stub_monitor_result = I2C_MONITOR_RC_OK;
+    memset(stub_spi_capture, 0, sizeof(stub_spi_capture));
+    memset(stub_spi_mode, 0, sizeof(stub_spi_mode));
+    memset(stub_spi_timeout_us, 0, sizeof(stub_spi_timeout_us));
+    memset(stub_spi_packets_emitted, 0, sizeof(stub_spi_packets_emitted));
+    memset(stub_spi_overrun_count, 0, sizeof(stub_spi_overrun_count));
+    memset(stub_spi_running, 0, sizeof(stub_spi_running));
+    stub_spi_monitor_result = SPI_MONITOR_RC_OK;
     memset(stub_vendor_tx_data, 0, sizeof(stub_vendor_tx_data));
     app_control_init();
     i2c_monitor_control_init();
+    spi_monitor_control_init();
     i2c_monitor_control_bind_executor(
         stub_monitor_set_channel_sample_hz,
         stub_monitor_get_channel_status,
         stub_monitor_get_all_status
     );
     i2c_monitor_control_set_inline_mode(true);
+    spi_monitor_control_bind_executor(
+        stub_spi_monitor_set_channel_config,
+        stub_spi_monitor_get_channel_status,
+        stub_spi_monitor_get_all_status
+    );
+    spi_monitor_control_set_inline_mode(true);
     stub_led_set_calls = 0u;
     device_cli_init(&test_device_cli_transport);
 }
@@ -404,6 +489,53 @@ static void test_cli_i2cmon_reports_disabled_state(void) {
     device_cli_poll();
 
     assert(strstr((const char *)stub_cdc_tx_data, "i2cmon disabled") != NULL);
+}
+
+static void test_cli_spimon_command_updates_monitor_channel(void) {
+    static const uint8_t payload[] = {'s','p','i','m','o','n',' ','4',' ','b','o','t','h',' ','3',' ','2','5','0','0','\r'};
+
+    reset_usb_stub();
+    load_cdc_rx(payload, sizeof(payload));
+
+    tud_cdc_rx_cb(0u);
+    device_cli_poll();
+
+    assert(stub_spi_running[4] == true);
+    assert(stub_spi_capture[4] == SPI_MONITOR_CAPTURE_MOSI_MISO);
+    assert(stub_spi_mode[4] == 3u);
+    assert(stub_spi_timeout_us[4] == 2500u);
+    assert(strstr((const char *)stub_cdc_tx_data, "spimon ch4 running capture=both mode=3 timeout_us=2500") != NULL);
+}
+
+static void test_cli_spimon_status_reports_channel_state(void) {
+    static const uint8_t payload[] = {'s','p','i','m','o','n',' ','s','t','a','t','u','s',' ','1','\r'};
+
+    reset_usb_stub();
+    stub_spi_running[1] = true;
+    stub_spi_capture[1] = SPI_MONITOR_CAPTURE_MOSI;
+    stub_spi_mode[1] = 0u;
+    stub_spi_timeout_us[1] = 1200u;
+    stub_spi_packets_emitted[1] = 9u;
+    stub_spi_overrun_count[1] = 2u;
+    load_cdc_rx(payload, sizeof(payload));
+
+    tud_cdc_rx_cb(0u);
+    device_cli_poll();
+
+    assert(strstr((const char *)stub_cdc_tx_data, "spimon ch1 running capture=mosi mode=0 timeout_us=1200 packets=9 overruns=2") != NULL);
+}
+
+static void test_cli_spimon_reports_disabled_state(void) {
+    static const uint8_t payload[] = {'s','p','i','m','o','n',' ','2',' ','m','o','s','i',' ','1','\r'};
+
+    reset_usb_stub();
+    stub_spi_monitor_result = SPI_MONITOR_RC_DISABLED;
+    load_cdc_rx(payload, sizeof(payload));
+
+    tud_cdc_rx_cb(0u);
+    device_cli_poll();
+
+    assert(strstr((const char *)stub_cdc_tx_data, "spimon disabled") != NULL);
 }
 
 static void test_hid_reboot_command_runs_once(void) {
@@ -871,6 +1003,153 @@ static void test_hid_i2c_monitor_get_all_status_rejects_failed_snapshot(void) {
     assert(response.payload_length == 0u);
 }
 
+static void test_hid_spi_monitor_set_config_updates_channel(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+
+    reset_usb_stub();
+    command.opcode = USB_HID_OPCODE_SPI_MONITOR_SET_CONFIG;
+    command.sequence = 11u;
+    command.payload_length = 7u;
+    command.payload[0] = 4u;
+    command.payload[1] = SPI_MONITOR_CAPTURE_MOSI_MISO;
+    command.payload[2] = 3u;
+    command.payload[3] = 0xC4u;
+    command.payload[4] = 0x09u;
+    command.payload[5] = 0x00u;
+    command.payload[6] = 0x00u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    assert(stub_spi_running[4] == true);
+    assert(stub_spi_capture[4] == SPI_MONITOR_CAPTURE_MOSI_MISO);
+    assert(stub_spi_mode[4] == 3u);
+    assert(stub_spi_timeout_us[4] == 2500u);
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_SPI_MONITOR_SET_CONFIG);
+    assert(response.status == USB_HID_STATUS_OK);
+}
+
+static void test_hid_spi_monitor_set_config_reports_busy(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+
+    reset_usb_stub();
+    stub_spi_monitor_result = SPI_MONITOR_RC_BUSY;
+    command.opcode = USB_HID_OPCODE_SPI_MONITOR_SET_CONFIG;
+    command.sequence = 12u;
+    command.payload_length = 7u;
+    command.payload[0] = 0u;
+    command.payload[1] = SPI_MONITOR_CAPTURE_MOSI;
+    command.payload[2] = 1u;
+    command.payload[3] = 0x00u;
+    command.payload[4] = 0x00u;
+    command.payload[5] = 0x00u;
+    command.payload[6] = 0x00u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_SPI_MONITOR_SET_CONFIG);
+    assert(response.status == USB_HID_STATUS_BUSY);
+}
+
+static void test_hid_spi_monitor_get_status_returns_payload(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+
+    reset_usb_stub();
+    stub_spi_running[1] = true;
+    stub_spi_capture[1] = SPI_MONITOR_CAPTURE_MOSI;
+    stub_spi_mode[1] = 2u;
+    stub_spi_timeout_us[1] = 1800u;
+    stub_spi_packets_emitted[1] = 7u;
+    stub_spi_overrun_count[1] = 3u;
+    command.opcode = USB_HID_OPCODE_SPI_MONITOR_GET_STATUS;
+    command.sequence = 13u;
+    command.payload_length = 1u;
+    command.payload[0] = 1u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_SPI_MONITOR_GET_STATUS);
+    assert(response.status == USB_HID_STATUS_OK);
+    assert(response.payload_length == 17u);
+    assert(response.payload[0] == 1u);
+    assert(response.payload[1] == 1u);
+    assert(response.payload[2] == 1u);
+    assert(response.payload[3] == SPI_MONITOR_CAPTURE_MOSI);
+    assert(response.payload[4] == 2u);
+    assert(response.payload[5] == 0x08u);
+    assert(response.payload[6] == 0x07u);
+    assert(response.payload[7] == 0x00u);
+    assert(response.payload[8] == 0x00u);
+    assert(response.payload[9] == 7u);
+    assert(response.payload[13] == 3u);
+}
+
+static void test_hid_spi_monitor_get_all_status_returns_all_channels(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+
+    reset_usb_stub();
+    stub_spi_running[0] = true;
+    stub_spi_capture[0] = SPI_MONITOR_CAPTURE_MOSI;
+    stub_spi_mode[0] = 0u;
+    stub_spi_timeout_us[0] = 1000u;
+    stub_spi_running[3] = true;
+    stub_spi_capture[3] = SPI_MONITOR_CAPTURE_MOSI_MISO;
+    stub_spi_mode[3] = 3u;
+    stub_spi_timeout_us[3] = 2500u;
+    stub_spi_overrun_count[3] = 1u;
+    command.opcode = USB_HID_OPCODE_SPI_MONITOR_GET_ALL_STATUS;
+    command.sequence = 14u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_SPI_MONITOR_GET_ALL_STATUS);
+    assert(response.status == USB_HID_STATUS_OK);
+    assert(response.payload_length == 60u);
+    assert(response.payload[0] == 0u);
+    assert(response.payload[2] == 1u);
+    assert(response.payload[3] == SPI_MONITOR_CAPTURE_MOSI);
+    assert(response.payload[4] == 0u);
+    assert(response.payload[5] == 0xE8u);
+    assert(response.payload[6] == 0x03u);
+    assert(response.payload[9] == 0u);
+    assert(response.payload[30] == 3u);
+    assert(response.payload[32] == 1u);
+    assert(response.payload[33] == SPI_MONITOR_CAPTURE_MOSI_MISO);
+    assert(response.payload[34] == 3u);
+    assert(response.payload[35] == 0xC4u);
+    assert(response.payload[36] == 0x09u);
+    assert(response.payload[39] == 1u);
+}
+
+static void test_hid_spi_monitor_get_all_status_rejects_failed_snapshot(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+
+    reset_usb_stub();
+    stub_spi_monitor_result = SPI_MONITOR_RC_FAILED;
+    command.opcode = USB_HID_OPCODE_SPI_MONITOR_GET_ALL_STATUS;
+    command.sequence = 15u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_SPI_MONITOR_GET_ALL_STATUS);
+    assert(response.status == USB_HID_STATUS_REJECTED);
+    assert(response.payload_length == 0u);
+}
+
 int main(void) {
     test_cli_unknown_command_writes_fixed_helper();
     test_cli_help_writes_response_without_connected_flag();
@@ -880,6 +1159,9 @@ int main(void) {
     test_cli_i2cmon_command_updates_monitor_channel();
     test_cli_i2cmon_status_reports_channel_state();
     test_cli_i2cmon_reports_disabled_state();
+    test_cli_spimon_command_updates_monitor_channel();
+    test_cli_spimon_status_reports_channel_state();
+    test_cli_spimon_reports_disabled_state();
     run_app_control_tests();
     test_system_reboot_uses_watchdog_reboot();
     test_system_board_family_reports_supported_family();
@@ -903,6 +1185,11 @@ int main(void) {
     test_hid_i2c_monitor_get_status_returns_payload();
     test_hid_i2c_monitor_get_all_status_returns_all_channels();
     test_hid_i2c_monitor_get_all_status_rejects_failed_snapshot();
+    test_hid_spi_monitor_set_config_updates_channel();
+    test_hid_spi_monitor_set_config_reports_busy();
+    test_hid_spi_monitor_get_status_returns_payload();
+    test_hid_spi_monitor_get_all_status_returns_all_channels();
+    test_hid_spi_monitor_get_all_status_rejects_failed_snapshot();
     test_hid_reboot_command_runs_once();
     return 0;
 }

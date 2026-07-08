@@ -13,6 +13,17 @@
 #include <stdint.h>
 #include <string.h>
 
+/**
+ * @brief Store the fully updated working decoder state back into the caller-owned state object.
+ * @param state Caller-owned decoder state to update.
+ * @param have_previous_levels Whether one previous sampled SDA/SCL pair is available.
+ * @param previous_sda Previously observed SDA level.
+ * @param previous_scl Previously observed SCL level.
+ * @param transaction_active Whether decoding is currently inside a transaction.
+ * @param pending_event Deferred START or STOP candidate awaiting confirmation.
+ * @param bit_count Number of bits currently accumulated into @p current_byte.
+ * @param current_byte Byte currently under construction.
+ */
 static void i2c_decoder_store_state(
     i2c_decoder_state_t *state,
     bool have_previous_levels,
@@ -32,6 +43,14 @@ static void i2c_decoder_store_state(
     state->current_byte = current_byte;
 }
 
+/**
+ * @brief Emit one decoded event to the caller-provided sink when emission is still enabled.
+ * @param result Caller-owned decode result updated if the sink rejects an event.
+ * @param event_sink Caller-owned sink pointer, cleared when the sink rejects an event.
+ * @param event_sink_context Caller-owned callback context passed to the sink.
+ * @param event_type Event type encoded as @ref i2c_decode_event_type_t.
+ * @param event_value Event payload value, such as a byte value or ACK bit state.
+ */
 static void i2c_decoder_emit_event(
     i2c_decoder_result_t *result,
     i2c_decoder_event_sink_t *event_sink,
@@ -45,6 +64,7 @@ static void i2c_decoder_emit_event(
     }
 }
 
+/** @copydoc i2c_decoder_init */
 void i2c_decoder_init(i2c_decoder_state_t *state) {
     if (state == NULL) {
         return;
@@ -53,6 +73,7 @@ void i2c_decoder_init(i2c_decoder_state_t *state) {
     memset(state, 0, sizeof(*state));
 }
 
+/** @copydoc i2c_decoder_process_buffer */
 i2c_decoder_result_t i2c_decoder_process_buffer(
     i2c_decoder_state_t *state,
     const uint32_t *raw_words,
@@ -82,6 +103,7 @@ i2c_decoder_result_t i2c_decoder_process_buffer(
     current_byte = state->current_byte;
 
     for (uint32_t word_index = 0u; word_index < raw_word_count; ++word_index) {
+        /* Each 32-bit raw word carries 16 consecutive two-bit SDA/SCL samples, MSB first. */
         uint32_t packed_samples = raw_words[word_index];
 
         for (uint32_t sample_in_word = 0u; sample_in_word < 16u; ++sample_in_word) {
@@ -100,6 +122,7 @@ i2c_decoder_result_t i2c_decoder_process_buffer(
             }
 
             if (pending_event != 0u) {
+                /* START and STOP are latched one sample later so SDA must remain stable while SCL stays high. */
                 skip_edge_detection = true;
                 if (scl) {
                     if ((pending_event == I2C_DECODE_EVENT_START) && !sda) {
@@ -118,6 +141,7 @@ i2c_decoder_result_t i2c_decoder_process_buffer(
             }
 
             if (!skip_edge_detection) {
+                /* START is SDA falling while SCL is high; STOP is SDA rising while SCL is high. */
                 if (previous_scl && scl && previous_sda && !sda) {
                     pending_event = I2C_DECODE_EVENT_START;
                 } else if (previous_scl && scl && !previous_sda && sda) {
@@ -126,6 +150,7 @@ i2c_decoder_result_t i2c_decoder_process_buffer(
             }
 
             if (!previous_scl && scl && transaction_active) {
+                /* Bits are sampled on SCL rising edges. After eight data bits, the next rising edge is ACK/NACK. */
                 if (bit_count < 8u) {
                     current_byte = (uint8_t)((current_byte << 1u) | (sda ? 1u : 0u));
                     bit_count += 1u;

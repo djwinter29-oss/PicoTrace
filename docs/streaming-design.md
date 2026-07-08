@@ -83,6 +83,8 @@ packet made of a fixed header plus payload.
 For the implementation-level design of that queue, see `docs/details/trace-ring-buffer-design.md`.
 For the producer-side PIO sampler and DMA ping-pong buffer boundary that now feeds raw sample
 fragments into that queue, see `docs/details/i2c-pio-sampler-design.md`.
+For the planned SPI capture-side monitor contract and clock-driven packet boundary rules, see
+`docs/details/spi-pio-monitor-design.md`.
 
 The user-tunable sizing knobs live under `firmware/src/config/ring_config.h` so projects can adjust
 packet size and ring depth without frequently changing the trace implementation itself.

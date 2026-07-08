@@ -1,3 +1,8 @@
+/**
+ * @file device_cli.c
+ * @brief Board-local CLI commands exposed over the USB CDC shell.
+ */
+
 #include "cli/device_cli.h"
 
 #include <stdio.h>
@@ -6,22 +11,39 @@
 
 #include "app_control.h"
 #include "trace/capture/i2c_monitor_control.h"
+#include "trace/capture/spi_monitor_control.h"
 
+/** @brief Write the CLI help text. */
 static bool device_cli_help(int argc, const char *const *argv);
+/** @brief Handle `i2cmon` control and status commands. */
 static bool device_cli_i2cmon(int argc, const char *const *argv);
+/** @brief Handle `spimon` control and status commands. */
+static bool device_cli_spimon(int argc, const char *const *argv);
+/** @brief Handle board LED control commands. */
 static bool device_cli_led(int argc, const char *const *argv);
+/** @brief Handle shared stream enable and disable commands. */
 static bool device_cli_stream(int argc, const char *const *argv);
+/** @brief Handle the reboot command. */
 static bool device_cli_reboot(int argc, const char *const *argv);
+/** @brief Handle unknown command names by printing fixed help. */
 static bool device_cli_unknown(const char *command_name);
 
+/** @brief Static command table registered with the CLI shell. */
 static const cli_shell_command_t device_cli_commands[] = {
     {"help", "help", device_cli_help},
     {"i2cmon", "i2cmon <channel> <sample_hz>|status <channel>", device_cli_i2cmon},
     {"led", "led on|off", device_cli_led},
     {"stream", "stream on|off", device_cli_stream},
     {"reboot", "reboot", device_cli_reboot},
+    {"spimon", "spimon <ch> off|mosi|both|status", device_cli_spimon},
 };
 
+/**
+ * @brief Parse a decimal `uint32_t` argument.
+ * @param text Null-terminated decimal text.
+ * @param value_out Caller-owned destination for the parsed value.
+ * @return `true` when parsing succeeded, otherwise `false`.
+ */
 static bool device_cli_parse_u32(const char *text, uint32_t *value_out) {
     char *end = NULL;
     unsigned long parsed;
@@ -39,6 +61,7 @@ static bool device_cli_parse_u32(const char *text, uint32_t *value_out) {
     return true;
 }
 
+/** @brief Format one I2C monitor status line for the CLI. */
 static bool device_cli_write_i2cmon_status(uint32_t channel, const i2c_monitor_channel_status_t *status) {
     char line[96];
 
@@ -58,6 +81,39 @@ static bool device_cli_write_i2cmon_status(uint32_t channel, const i2c_monitor_c
     return cli_shell_write_line(line);
 }
 
+/** @brief Map the SPI capture selection enum to a CLI-visible token. */
+static const char *device_cli_spi_capture_name(spi_monitor_capture_t capture) {
+    switch (capture) {
+        case SPI_MONITOR_CAPTURE_MOSI:
+            return "mosi";
+        case SPI_MONITOR_CAPTURE_MOSI_MISO:
+            return "both";
+        case SPI_MONITOR_CAPTURE_DISABLED:
+        default:
+            return "off";
+    }
+}
+
+/** @brief Format one SPI monitor status line for the CLI. */
+static bool device_cli_write_spimon_status(uint32_t channel, const spi_monitor_channel_status_t *status) {
+    char line[112];
+
+    snprintf(
+        line,
+        sizeof(line),
+        "spimon ch%lu %s capture=%s mode=%u timeout_us=%lu packets=%lu overruns=%lu",
+        (unsigned long)channel,
+        status->running ? "running" : "stopped",
+        device_cli_spi_capture_name(status->capture),
+        (unsigned int)status->spi_mode,
+        (unsigned long)status->timeout_us,
+        (unsigned long)status->packets_emitted,
+        (unsigned long)status->overrun_count
+    );
+    return cli_shell_write_line(line);
+}
+
+/** @brief Emit the fixed help listing for all registered CLI commands. */
 static bool device_cli_write_help(void) {
     cli_shell_write_line("Commands:");
     for (uint32_t index = 0u; index < (sizeof(device_cli_commands) / sizeof(device_cli_commands[0])); ++index) {
@@ -67,6 +123,7 @@ static bool device_cli_write_help(void) {
     return true;
 }
 
+/** @copydoc device_cli_help */
 static bool device_cli_help(int argc, const char *const *argv) {
     (void)argc;
     (void)argv;
@@ -74,6 +131,7 @@ static bool device_cli_help(int argc, const char *const *argv) {
     return device_cli_write_help();
 }
 
+/** @copydoc device_cli_i2cmon */
 static bool device_cli_i2cmon(int argc, const char *const *argv) {
     i2c_monitor_channel_status_t status;
     i2c_monitor_rc_t result;
@@ -112,6 +170,82 @@ static bool device_cli_i2cmon(int argc, const char *const *argv) {
     return cli_shell_write_line("Usage: i2cmon <channel> <sample_hz>|status <channel>");
 }
 
+/** @copydoc device_cli_spimon */
+static bool device_cli_spimon(int argc, const char *const *argv) {
+    spi_monitor_channel_status_t status;
+    spi_monitor_channel_config_t config;
+    spi_monitor_rc_t result;
+    uint32_t channel;
+    uint32_t spi_mode;
+    uint32_t timeout_us = 0u;
+
+    if ((argc == 3) && (strcmp(argv[1], "status") == 0) && device_cli_parse_u32(argv[2], &channel)) {
+        if (spi_monitor_control_get_channel_status(channel, &status) != SPI_MONITOR_RC_OK) {
+            return cli_shell_write_line("spimon status failed");
+        }
+
+        return device_cli_write_spimon_status(channel, &status);
+    }
+
+    if ((argc == 3) && device_cli_parse_u32(argv[1], &channel) && (strcmp(argv[2], "off") == 0)) {
+        memset(&config, 0, sizeof(config));
+        config.capture = SPI_MONITOR_CAPTURE_DISABLED;
+        result = spi_monitor_control_set_channel_config(channel, &config);
+        if (result != SPI_MONITOR_RC_OK) {
+            if (result == SPI_MONITOR_RC_BUSY) {
+                return cli_shell_write_line("spimon busy");
+            }
+            if (result == SPI_MONITOR_RC_DISABLED) {
+                return cli_shell_write_line("spimon disabled");
+            }
+            return cli_shell_write_line("spimon apply failed");
+        }
+
+        if (spi_monitor_control_get_channel_status(channel, &status) != SPI_MONITOR_RC_OK) {
+            return cli_shell_write_line("spimon status failed");
+        }
+
+        return device_cli_write_spimon_status(channel, &status);
+    }
+
+    if ((argc == 4 || argc == 5) && device_cli_parse_u32(argv[1], &channel) && device_cli_parse_u32(argv[3], &spi_mode)) {
+        memset(&config, 0, sizeof(config));
+        if (strcmp(argv[2], "mosi") == 0) {
+            config.capture = SPI_MONITOR_CAPTURE_MOSI;
+        } else if (strcmp(argv[2], "both") == 0) {
+            config.capture = SPI_MONITOR_CAPTURE_MOSI_MISO;
+        } else {
+            return cli_shell_write_line("Usage: spimon <channel> off|mosi <mode> [timeout_us]|both <mode> [timeout_us]|status <channel>");
+        }
+
+        if ((argc == 5) && !device_cli_parse_u32(argv[4], &timeout_us)) {
+            return cli_shell_write_line("Usage: spimon <channel> off|mosi <mode> [timeout_us]|both <mode> [timeout_us]|status <channel>");
+        }
+
+        config.spi_mode = (uint8_t)spi_mode;
+        config.timeout_us = timeout_us;
+        result = spi_monitor_control_set_channel_config(channel, &config);
+        if (result != SPI_MONITOR_RC_OK) {
+            if (result == SPI_MONITOR_RC_BUSY) {
+                return cli_shell_write_line("spimon busy");
+            }
+            if (result == SPI_MONITOR_RC_DISABLED) {
+                return cli_shell_write_line("spimon disabled");
+            }
+            return cli_shell_write_line("spimon apply failed");
+        }
+
+        if (spi_monitor_control_get_channel_status(channel, &status) != SPI_MONITOR_RC_OK) {
+            return cli_shell_write_line("spimon status failed");
+        }
+
+        return device_cli_write_spimon_status(channel, &status);
+    }
+
+    return cli_shell_write_line("Usage: spimon <channel> off|mosi <mode> [timeout_us]|both <mode> [timeout_us]|status <channel>");
+}
+
+/** @copydoc device_cli_led */
 static bool device_cli_led(int argc, const char *const *argv) {
     if (argc != 2) {
         return cli_shell_write_line("Usage: led on|off");
@@ -130,6 +264,7 @@ static bool device_cli_led(int argc, const char *const *argv) {
     return cli_shell_write_line("Usage: led on|off");
 }
 
+/** @copydoc device_cli_stream */
 static bool device_cli_stream(int argc, const char *const *argv) {
     if (argc != 2) {
         return cli_shell_write_line("Usage: stream on|off");
@@ -148,6 +283,7 @@ static bool device_cli_stream(int argc, const char *const *argv) {
     return cli_shell_write_line("Usage: stream on|off");
 }
 
+/** @copydoc device_cli_reboot */
 static bool device_cli_reboot(int argc, const char *const *argv) {
     (void)argv;
 
@@ -159,6 +295,7 @@ static bool device_cli_reboot(int argc, const char *const *argv) {
     return true;
 }
 
+/** @copydoc device_cli_unknown */
 static bool device_cli_unknown(const char *command_name) {
     (void)command_name;
 
@@ -166,6 +303,10 @@ static bool device_cli_unknown(const char *command_name) {
     return device_cli_write_help();
 }
 
+/**
+ * @brief Initialize the device CLI with the supplied shell transport.
+ * @param transport Caller-owned shell transport binding.
+ */
 void device_cli_init(const cli_shell_transport_t *transport) {
     cli_shell_config_t config = {
         .transport = transport,

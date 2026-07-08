@@ -1,0 +1,93 @@
+; @file spi_monitor.pio
+; @brief Passive SPI edge sampler scaffold for one observed SPI bus.
+;
+; The program samples the contiguous SCLK, MOSI, and MISO input group. The current scaffold keeps
+; all three bits so later software can route bytes by CS selection and decide whether to ignore the
+; MISO bit for MOSI-only sessions.
+
+.program spi_monitor_mode0_sampler
+
+.wrap_target
+    wait 0 pin 0
+bitloop0:
+    wait 1 pin 0
+    in pins, 3
+    wait 0 pin 0
+.wrap
+
+.program spi_monitor_mode1_sampler
+
+.wrap_target
+    wait 0 pin 0
+bitloop1:
+    wait 1 pin 0
+    wait 0 pin 0
+    in pins, 3
+.wrap
+
+.program spi_monitor_mode2_sampler
+
+.wrap_target
+    wait 1 pin 0
+bitloop2:
+    wait 0 pin 0
+    in pins, 3
+    wait 1 pin 0
+.wrap
+
+.program spi_monitor_mode3_sampler
+
+.wrap_target
+    wait 1 pin 0
+bitloop3:
+    wait 0 pin 0
+    wait 1 pin 0
+    in pins, 3
+.wrap
+
+% c-sdk {
+static inline void spi_monitor_sampler_program_init_common(
+    PIO pio,
+    uint sm,
+    uint offset,
+    uint pin_base,
+    float clkdiv,
+    pio_sm_config *config
+) {
+    sm_config_set_in_pins(config, pin_base);
+    sm_config_set_clkdiv(config, clkdiv);
+    sm_config_set_in_shift(config, false, true, 24u);
+
+    pio_gpio_init(pio, pin_base);
+    pio_gpio_init(pio, pin_base + 1u);
+    pio_gpio_init(pio, pin_base + 2u);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_base, 3u, false);
+    pio_sm_init(pio, sm, offset, config);
+    pio_sm_clear_fifos(pio, sm);
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+static inline void spi_monitor_mode0_sampler_program_init(PIO pio, uint sm, uint offset, uint pin_base, float clkdiv) {
+    pio_sm_config config = spi_monitor_mode0_sampler_program_get_default_config(offset);
+
+    spi_monitor_sampler_program_init_common(pio, sm, offset, pin_base, clkdiv, &config);
+}
+
+static inline void spi_monitor_mode1_sampler_program_init(PIO pio, uint sm, uint offset, uint pin_base, float clkdiv) {
+    pio_sm_config config = spi_monitor_mode1_sampler_program_get_default_config(offset);
+
+    spi_monitor_sampler_program_init_common(pio, sm, offset, pin_base, clkdiv, &config);
+}
+
+static inline void spi_monitor_mode2_sampler_program_init(PIO pio, uint sm, uint offset, uint pin_base, float clkdiv) {
+    pio_sm_config config = spi_monitor_mode2_sampler_program_get_default_config(offset);
+
+    spi_monitor_sampler_program_init_common(pio, sm, offset, pin_base, clkdiv, &config);
+}
+
+static inline void spi_monitor_mode3_sampler_program_init(PIO pio, uint sm, uint offset, uint pin_base, float clkdiv) {
+    pio_sm_config config = spi_monitor_mode3_sampler_program_get_default_config(offset);
+
+    spi_monitor_sampler_program_init_common(pio, sm, offset, pin_base, clkdiv, &config);
+}
+%}

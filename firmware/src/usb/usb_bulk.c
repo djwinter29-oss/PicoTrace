@@ -1,3 +1,8 @@
+/**
+ * @file usb_bulk.c
+ * @brief TinyUSB vendor bulk helpers for exact writes and trace-ring streaming.
+ */
+
 #include "usb/usb_bulk.h"
 
 #include "tusb.h"
@@ -7,16 +12,23 @@
 #include "trace/trace_packet.h"
 #include "trace/trace_ring.h"
 
+/** @brief TinyUSB vendor interface index used for trace streaming. */
 #define USB_VENDOR_ITF 0u
+/** @brief Vendor endpoint packet size used when streaming trace data. */
 #define USB_VENDOR_PACKET_SIZE 64u
+
+/** @brief Borrowed pointer to the trace packet currently being streamed. */
 static const trace_packet_t *usb_stream_packet;
+/** @brief Byte offset already transmitted from @ref usb_stream_packet. */
 static uint32_t usb_stream_packet_offset;
 
+/** @brief Drop any in-progress borrowed packet and restart stream state at a packet boundary. */
 static void usb_bulk_reset_stream_state(void) {
     usb_stream_packet = NULL;
     usb_stream_packet_offset = 0u;
 }
 
+/** @brief Pull packets from the trace ring and stream them over the vendor endpoint. */
 static void usb_bulk_poll_trace_ring(void) {
     while (true) {
         uint32_t packet_bytes;
@@ -55,6 +67,13 @@ static void usb_bulk_poll_trace_ring(void) {
     }
 }
 
+/**
+ * @brief Write one vendor bulk chunk.
+ * @param data Caller-owned bytes to write.
+ * @param length Requested byte count.
+ * @param exact When true, require all bytes to fit in the current write window.
+ * @return Number of bytes accepted by TinyUSB.
+ */
 static uint32_t usb_bulk_write_chunk(const uint8_t *data, uint32_t length, bool exact) {
     uint32_t available;
     uint32_t chunk;
@@ -90,14 +109,17 @@ static uint32_t usb_bulk_write_chunk(const uint8_t *data, uint32_t length, bool 
     return written;
 }
 
+/** @copydoc usb_bulk_write */
 bool usb_bulk_write(const uint8_t *data, uint32_t length) {
     return usb_bulk_write_chunk(data, length, true) == length;
 }
 
+/** @copydoc usb_bulk_stream_write */
 uint32_t usb_bulk_stream_write(const uint8_t *data, uint32_t length) {
     return usb_bulk_write_chunk(data, length, false);
 }
 
+/** @copydoc usb_bulk_poll_stream */
 void usb_bulk_poll_stream(bool enabled) {
     if (!enabled) {
         usb_bulk_reset_stream_state();
@@ -111,6 +133,7 @@ void usb_bulk_poll_stream(bool enabled) {
     usb_bulk_poll_trace_ring();
 }
 
+/** @copydoc usb_bulk_flush */
 void usb_bulk_flush(void) {
     if (!tud_ready()) {
         return;

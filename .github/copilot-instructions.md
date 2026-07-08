@@ -97,6 +97,16 @@ Lazy code without its check is unfinished. For non-trivial logic, leave one runn
 - Keep board pin allocation in `docs/hardware-connections.md` and concrete Raspberry Pi bench hookup guidance in `docs/raspberry-pi-test-setup.md`
 - When documenting the trace queue, align with the current behavior in `firmware/src/trace/` and the host checks in `firmware/tests/usb_app_test.c`
 
+### Doxygen Rules
+
+- Public headers must use Doxygen comments for exported enums, structs, typedefs, macros, and functions
+- Source files should use Doxygen comments for file headers, internal enums, internal structs, and non-trivial internal helpers that define ownership, state, or protocol layout
+- For structs in both headers and source files, document the struct itself and each member with a brief `/**< ... */` field description when the member carries state, counters, protocol meaning, or ownership meaning
+- For enums in both headers and source files, document the enum itself and add brief value descriptions for each enumerator when the values represent state machines, command kinds, flags, or protocol-visible meanings
+- Prefer `@brief`, `@param`, `@return`, and `@copydoc` over ad hoc block comments when documenting functions
+- Keep Doxygen comments factual and compact; describe intent, ownership, lifetime, and interpretation, not obvious syntax
+- When adding a new module, do not leave only the header documented; apply the same Doxygen standard to the matching `.c` file where it defines important state or control flow
+
 ## Change Guidance
 
 - Keep changes narrowly scoped to the requested behavior

@@ -1,41 +1,60 @@
+/**
+ * @file usb_descriptors.c
+ * @brief TinyUSB descriptor tables and descriptor callbacks for PicoTrace.
+ */
+
 #include "bsp/board_api.h"
 #include "tusb.h"
 #include <string.h>
 
 #include "usb/usb_hid.h"
 
+/** @brief USB vendor ID used by the PicoTrace firmware image. */
 #define USB_VID 0xCafe
+/** @brief USB product ID used by the PicoTrace firmware image. */
 #define USB_PID 0x4003
+/** @brief USB device version advertised in the device descriptor. */
 #define USB_BCD  0x0210
 
+/** @brief Microsoft OS 2.0 vendor request code used for the WinUSB descriptor set. */
 #define USB_MS_VENDOR_REQUEST 0x01
+/** @brief Total bytes in the Microsoft OS 2.0 descriptor set. */
 #define USB_MS_OS_20_DESC_LEN 0x00B2
+/** @brief Total bytes in the BOS descriptor including the Microsoft OS capability descriptor. */
 #define USB_BOS_TOTAL_LEN (TUD_BOS_DESC_LEN + TUD_BOS_MICROSOFT_OS_DESC_LEN)
 
+/** @brief Manufacturer string exposed in the USB string table. */
 #define USB_STR_MANUFACTURER "PicoTrace"
+/** @brief Product string exposed in the USB string table. */
 #define USB_STR_PRODUCT "PicoTrace Protocol Tracer"
+/** @brief Interface string for the CDC host-control interface. */
 #define USB_STR_CDC "CDC Host Control"
+/** @brief Interface string for the vendor bulk trace stream interface. */
 #define USB_STR_VENDOR "Trace Data Stream"
+/** @brief Interface string for the HID control interface. */
 #define USB_STR_HID "HID Control"
 
-enum {
-    ITF_NUM_CDC = 0,
-    ITF_NUM_CDC_DATA,
-    ITF_NUM_VENDOR,
-    ITF_NUM_HID,
-    ITF_NUM_TOTAL
-};
+/** @brief USB interface numbering used inside the configuration descriptor. */
+typedef enum {
+    ITF_NUM_CDC = 0, /**< CDC control interface number. */
+    ITF_NUM_CDC_DATA, /**< CDC data interface number. */
+    ITF_NUM_VENDOR, /**< Vendor bulk trace stream interface number. */
+    ITF_NUM_HID, /**< HID control interface number. */
+    ITF_NUM_TOTAL /**< Total number of interfaces in the configuration. */
+} usb_interface_number_t;
 
-enum {
-    STRID_LANGID = 0,
-    STRID_MANUFACTURER,
-    STRID_PRODUCT,
-    STRID_SERIAL,
-    STRID_CDC,
-    STRID_VENDOR,
-    STRID_HID,
-};
+/** @brief USB string descriptor indices used by the device and configuration descriptors. */
+typedef enum {
+    STRID_LANGID = 0, /**< Language ID string descriptor index. */
+    STRID_MANUFACTURER, /**< Manufacturer string descriptor index. */
+    STRID_PRODUCT, /**< Product string descriptor index. */
+    STRID_SERIAL, /**< Serial number string descriptor index. */
+    STRID_CDC, /**< CDC interface string descriptor index. */
+    STRID_VENDOR, /**< Vendor interface string descriptor index. */
+    STRID_HID, /**< HID interface string descriptor index. */
+} usb_string_id_t;
 
+/** @brief HID report descriptor for the fixed-size PicoTrace control report. */
 static uint8_t const hid_report_descriptor[] = {
     0x05, 0x01,
     0x09, 0x01,
@@ -52,6 +71,7 @@ static uint8_t const hid_report_descriptor[] = {
     0xc0,
 };
 
+/** @brief USB device descriptor returned to the host during enumeration. */
 static tusb_desc_device_t const desc_device = {
     .bLength = sizeof(tusb_desc_device_t),
     .bDescriptorType = TUSB_DESC_DEVICE,
@@ -69,18 +89,30 @@ static tusb_desc_device_t const desc_device = {
     .bNumConfigurations = 1,
 };
 
+/**
+ * @brief TinyUSB callback returning the device descriptor.
+ * @return Pointer to the static device descriptor.
+ */
 uint8_t const *tud_descriptor_device_cb(void) {
     return (uint8_t const *)&desc_device;
 }
 
+/** @brief Endpoint number for CDC notification IN traffic. */
 #define EPNUM_CDC_NOTIF 0x81
+/** @brief Endpoint number for CDC data OUT traffic. */
 #define EPNUM_CDC_OUT   0x02
+/** @brief Endpoint number for CDC data IN traffic. */
 #define EPNUM_CDC_IN    0x82
+/** @brief Endpoint number for vendor trace stream OUT traffic. */
 #define EPNUM_VENDOR_OUT 0x03
+/** @brief Endpoint number for vendor trace stream IN traffic. */
 #define EPNUM_VENDOR_IN  0x83
+/** @brief Endpoint number for HID control IN traffic. */
 #define EPNUM_HID_IN     0x84
+/** @brief Total bytes in the one and only USB configuration descriptor. */
 #define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_VENDOR_DESC_LEN + TUD_HID_DESC_LEN)
 
+/** @brief Configuration descriptor containing CDC, vendor bulk, and HID interfaces. */
 static uint8_t const desc_configuration[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0, 100),
     TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, STRID_CDC, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
@@ -88,11 +120,13 @@ static uint8_t const desc_configuration[] = {
     TUD_HID_DESCRIPTOR(ITF_NUM_HID, STRID_HID, HID_ITF_PROTOCOL_NONE, sizeof(hid_report_descriptor), EPNUM_HID_IN, 64, 5),
 };
 
+/** @brief BOS descriptor advertising the Microsoft OS 2.0 capability descriptor. */
 static uint8_t const desc_bos[] = {
     TUD_BOS_DESCRIPTOR(USB_BOS_TOTAL_LEN, 1),
     TUD_BOS_MS_OS_20_DESCRIPTOR(USB_MS_OS_20_DESC_LEN, USB_MS_VENDOR_REQUEST),
 };
 
+/** @brief Microsoft OS 2.0 descriptor set used to advertise the vendor interface as WinUSB. */
 static uint8_t const desc_ms_os_20[] = {
     U16_TO_U8S_LE(0x000A),
     U16_TO_U8S_LE(MS_OS_20_SET_HEADER_DESCRIPTOR),
@@ -136,15 +170,31 @@ static uint8_t const desc_ms_os_20[] = {
 
 TU_VERIFY_STATIC(sizeof(desc_ms_os_20) == USB_MS_OS_20_DESC_LEN, "Incorrect Microsoft OS 2.0 descriptor size");
 
+/**
+ * @brief TinyUSB callback returning the configuration descriptor.
+ * @param index Configuration index requested by the host.
+ * @return Pointer to the static configuration descriptor.
+ */
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
     (void)index;
     return desc_configuration;
 }
 
+/**
+ * @brief TinyUSB callback returning the BOS descriptor.
+ * @return Pointer to the static BOS descriptor.
+ */
 uint8_t const *tud_descriptor_bos_cb(void) {
     return desc_bos;
 }
 
+/**
+ * @brief TinyUSB callback serving the Microsoft OS 2.0 vendor descriptor request.
+ * @param rhport Root-hub port receiving the control request.
+ * @param stage Current control-transfer stage.
+ * @param request Setup packet describing the vendor request.
+ * @return `true` when the request was handled or ignored for a non-setup stage.
+ */
 bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request) {
     uint16_t total_len;
 
@@ -162,6 +212,7 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_requ
     return tud_control_xfer(rhport, request, (void *)(uintptr_t)desc_ms_os_20, total_len);
 }
 
+/** @brief USB string table backing the TinyUSB string-descriptor callback. */
 static char const *string_desc_arr[] = {
     (const char[]){0x09, 0x04},
     USB_STR_MANUFACTURER,
@@ -172,13 +223,25 @@ static char const *string_desc_arr[] = {
     USB_STR_HID,
 };
 
+/**
+ * @brief TinyUSB callback returning the HID report descriptor.
+ * @param instance HID interface instance requested by TinyUSB.
+ * @return Pointer to the fixed HID report descriptor.
+ */
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance) {
     (void)instance;
     return hid_report_descriptor;
 }
 
+/** @brief Scratch UTF-16 string descriptor buffer returned by TinyUSB string callbacks. */
 static uint16_t desc_str[32 + 1];
 
+/**
+ * @brief TinyUSB callback returning one UTF-16 USB string descriptor.
+ * @param index String descriptor index requested by the host.
+ * @param langid Language ID requested by the host.
+ * @return Pointer to the UTF-16 descriptor buffer, or `NULL` for an invalid index.
+ */
 uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
     (void)langid;
     size_t chr_count;

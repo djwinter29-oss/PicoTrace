@@ -8,12 +8,20 @@
 #include <stddef.h>
 #include <string.h>
 
+/**
+ * @brief Reset the currently open packet fragment bookkeeping while keeping the builder configured.
+ * @param builder Caller-owned packet builder state.
+ */
 static void i2c_trace_packet_builder_reset_open_packet(i2c_trace_packet_builder_t *builder) {
     builder->packet_open = false;
     builder->payload_offset = 0u;
     builder->event_count = 0u;
 }
 
+/**
+ * @brief Open a fresh trace packet fragment using the builder's current session state.
+ * @param builder Caller-owned packet builder state.
+ */
 static void i2c_trace_packet_builder_begin_packet(i2c_trace_packet_builder_t *builder) {
     builder->packet.header.version = TRACE_PACKET_VERSION;
     builder->packet.header.type = TRACE_TYPE_I2C;
@@ -31,6 +39,12 @@ static void i2c_trace_packet_builder_begin_packet(i2c_trace_packet_builder_t *bu
     builder->packet_open = true;
 }
 
+/**
+ * @brief Finalize and emit the currently open packet fragment.
+ * @param builder Caller-owned packet builder state.
+ * @param end_of_transaction Whether this fragment closes the current logical I2C transaction.
+ * @return `true` when the fragment was accepted or no fragment was open, otherwise `false`.
+ */
 static bool i2c_trace_packet_builder_flush(i2c_trace_packet_builder_t *builder, bool end_of_transaction) {
     if (!builder->packet_open) {
         return true;
@@ -52,6 +66,7 @@ static bool i2c_trace_packet_builder_flush(i2c_trace_packet_builder_t *builder, 
     return true;
 }
 
+/** @copydoc i2c_trace_packet_builder_init */
 bool i2c_trace_packet_builder_init(
     i2c_trace_packet_builder_t *builder,
     uint8_t logical_channel,
@@ -71,6 +86,7 @@ bool i2c_trace_packet_builder_init(
     return true;
 }
 
+/** @copydoc i2c_trace_packet_builder_discard */
 void i2c_trace_packet_builder_discard(i2c_trace_packet_builder_t *builder) {
     if (builder == NULL) {
         return;
@@ -81,6 +97,7 @@ void i2c_trace_packet_builder_discard(i2c_trace_packet_builder_t *builder) {
     i2c_trace_packet_builder_reset_open_packet(builder);
 }
 
+/** @copydoc i2c_trace_packet_builder_mark_next_packet */
 void i2c_trace_packet_builder_mark_next_packet(i2c_trace_packet_builder_t *builder, uint8_t flags) {
     if (builder == NULL) {
         return;
@@ -89,6 +106,7 @@ void i2c_trace_packet_builder_mark_next_packet(i2c_trace_packet_builder_t *build
     builder->pending_flags |= flags;
 }
 
+/** @copydoc i2c_trace_packet_builder_append_event */
 bool i2c_trace_packet_builder_append_event(
     i2c_trace_packet_builder_t *builder,
     uint8_t event_type,
@@ -105,6 +123,7 @@ bool i2c_trace_packet_builder_append_event(
     }
 
     if ((builder->payload_offset + I2C_TRACE_EVENT_BYTES) > TRACE_PACKET_PAYLOAD_BYTES) {
+        /* A single transaction may span multiple fixed packets, so full payloads flush as continued fragments. */
         if (!i2c_trace_packet_builder_flush(builder, false)) {
             return false;
         }
@@ -116,6 +135,7 @@ bool i2c_trace_packet_builder_append_event(
     builder->payload_offset += I2C_TRACE_EVENT_BYTES;
     builder->event_count += 1u;
 
+    /* STOP and explicit boundary/error events terminate the current logical transaction fragment. */
     if ((event_type == I2C_DECODE_EVENT_STOP)
             || (event_type == I2C_DECODE_EVENT_ERROR)
             || (event_type == I2C_DECODE_EVENT_OVERFLOW)
@@ -127,6 +147,7 @@ bool i2c_trace_packet_builder_append_event(
     return true;
 }
 
+/** @copydoc i2c_trace_packet_builder_capture_event */
 bool i2c_trace_packet_builder_capture_event(void *context, uint8_t event_type, uint8_t event_value) {
     return i2c_trace_packet_builder_append_event(
         (i2c_trace_packet_builder_t *)context,

@@ -20,6 +20,7 @@ add_executable(usb_app_test
     usb_app_test.c
     ../src/driver/system.c
     ../src/trace/capture/i2c_monitor_control.c
+    ../src/trace/capture/spi_monitor_control.c
     ../src/trace/decode/i2c_decoder.c
     ../src/trace/decode/i2c_trace_packet.c
     ../src/trace/trace_ring.c
