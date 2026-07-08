@@ -107,6 +107,15 @@ spi_monitor_rc_t spi_monitor_get_bus_status(uint32_t bus, spi_monitor_bus_status
 spi_monitor_rc_t spi_monitor_get_all_status(spi_monitor_channel_status_t *status_out);
 
 #if defined(SPI_MONITOR_TEST_HOOKS)
+/**
+ * @brief Feed one synthetic raw SPI buffer into the MOSI-only test path for one observed bus.
+ * @param bus Zero-based observed SPI bus index.
+ * @param active_cs_mask Sampled active-low `CS_N` mask to apply at buffer handoff.
+ * @param timestamp_us Producer timestamp to stamp onto any opened fragment.
+ * @param raw_words Caller-owned packed raw SPI sample words.
+ * @param raw_word_count Number of valid entries in @p raw_words.
+ * @return `true` when the input was accepted by the test hook, otherwise `false`.
+ */
 bool spi_monitor_test_feed_samples(
     uint32_t bus,
     uint8_t active_cs_mask,
@@ -114,7 +123,37 @@ bool spi_monitor_test_feed_samples(
     const uint32_t *raw_words,
     uint32_t raw_word_count
 );
+/**
+ * @brief Feed synthetic MOSI and MISO raw buffers into the dual-lane test path for one observed bus.
+ * @param bus Zero-based observed SPI bus index.
+ * @param active_cs_mask Sampled active-low `CS_N` mask to apply at buffer handoff.
+ * @param timestamp_us Producer timestamp to stamp onto any opened fragment.
+ * @param mosi_raw_words Caller-owned packed MOSI sample words.
+ * @param miso_raw_words Caller-owned packed MISO sample words.
+ * @param raw_word_count Number of valid entries in both raw-word arrays.
+ * @return `true` when the input was accepted by the test hook, otherwise `false`.
+ */
+bool spi_monitor_test_feed_dual_lane_samples(
+    uint32_t bus,
+    uint8_t active_cs_mask,
+    uint32_t timestamp_us,
+    const uint32_t *mosi_raw_words,
+    const uint32_t *miso_raw_words,
+    uint32_t raw_word_count
+);
+/**
+ * @brief Run the SPI timeout-closure logic for one observed bus in the host test environment.
+ * @param bus Zero-based observed SPI bus index.
+ * @param timestamp_us Synthetic current timestamp used for the timeout comparison.
+ */
 void spi_monitor_test_poll_timeout(uint32_t bus, uint32_t timestamp_us);
+/**
+ * @brief Inject synthetic per-lane DMA overrun counts for one observed bus in host tests.
+ * @param bus Zero-based observed SPI bus index.
+ * @param mosi_overruns Completed-half overruns to expose on the MOSI lane.
+ * @param miso_overruns Completed-half overruns to expose on the MISO lane.
+ */
+void spi_monitor_test_set_lane_overrun_counts(uint32_t bus, uint32_t mosi_overruns, uint32_t miso_overruns);
 #endif
 
 #endif

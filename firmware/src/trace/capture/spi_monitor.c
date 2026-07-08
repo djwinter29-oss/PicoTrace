@@ -16,6 +16,7 @@
 #include "hardware/pio.h"
 #include "pico/time.h"
 
+#include "app_control.h"
 #include "config/spi_monitor_config.h"
 #include "trace/trace_ring.h"
 
@@ -164,6 +165,11 @@ static bool spi_monitor_valid_channel_select_mask(uint8_t channel_select_mask) {
     return (channel_select_mask != 0u) && ((channel_select_mask & (uint8_t)~valid_mask) == 0u);
 }
 
+/** @brief Return whether SPI capture work should currently produce trace output. */
+static bool spi_monitor_stream_enabled(void) {
+    return app_control_stream_enabled();
+}
+
 /** @brief Map one logical SPI channel index to its owning observed SPI bus index. */
 static uint32_t spi_monitor_channel_to_bus(uint32_t channel) {
     return channel / SPI_MONITOR_CS_SLOTS_PER_BUS;
@@ -223,6 +229,21 @@ static void spi_monitor_packet_builder_reset(spi_monitor_packet_builder_t *build
 static void spi_monitor_reset_bus_runtime(spi_monitor_bus_runtime_t *bus_runtime) {
     memset(bus_runtime, 0, sizeof(*bus_runtime));
     bus_runtime->active_slot = SPI_MONITOR_NO_ACTIVE_SLOT;
+}
+
+/** @brief Discard any open SPI packet builders owned by one observed bus. */
+static void spi_monitor_discard_bus_packets(uint32_t bus) {
+    uint32_t first_channel = spi_monitor_bus_first_channel(bus);
+
+    for (uint32_t channel = first_channel; channel < (first_channel + SPI_MONITOR_CS_SLOTS_PER_BUS); ++channel) {
+        spi_monitor_packet_builder_reset(&g_spi_monitor_channels[channel].packet_builder);
+    }
+}
+
+/** @brief Abort one observed SPI bus transaction without flushing any partial fragment to the ring. */
+static void spi_monitor_abort_bus_transaction(uint32_t bus) {
+    spi_monitor_discard_bus_packets(bus);
+    spi_monitor_reset_bus_runtime(&g_spi_monitor_bus_runtimes[bus]);
 }
 
 /** @brief Return the GPIO number for one observed chip-select slot. */
@@ -288,7 +309,7 @@ static void spi_monitor_packet_builder_begin(
     builder->packet.header.flags = builder->pending_flags;
     builder->packet.header.payload_len = 0u;
     builder->packet.header.meta = (uint16_t)channel_state->capture;
-    builder->packet.header.sequence = ++channel_state->packets_emitted;
+    builder->packet.header.sequence = channel_state->packets_emitted + 1u;
     builder->packet.header.timestamp_us = timestamp_us;
     if (builder->transaction_fragmented) {
         builder->packet.header.flags |= TRACE_FLAG_CONTINUED;
@@ -317,15 +338,13 @@ static bool spi_monitor_packet_builder_flush(
     }
     builder->packet.header.payload_len = (uint16_t)builder->payload_offset;
     if (!spi_monitor_push_trace_packet(&builder->packet)) {
-        if (channel_state->packets_emitted != 0u) {
-            channel_state->packets_emitted -= 1u;
-        }
         channel_state->sink_overrun_count += 1u;
         spi_monitor_packet_builder_reset(builder);
         spi_monitor_packet_builder_mark_next(builder, TRACE_FLAG_OVERFLOW);
         return false;
     }
 
+    channel_state->packets_emitted += 1u;
     builder->packet_open = false;
     builder->payload_offset = 0u;
     builder->transaction_fragmented = !end_of_transaction;
@@ -400,18 +419,23 @@ static void spi_monitor_open_bus_transaction(uint32_t bus, uint8_t active_slot, 
     bus_runtime->last_activity_timestamp_us = timestamp_us;
 }
 
-/** @brief Decode one authoritative raw SPI buffer for one observed bus and emit fixed trace packets. */
-static void spi_monitor_process_bus_buffer(
+/** @brief Decode one staged DMA half-buffer for one observed bus using the routed lane buffers. */
+static void spi_monitor_process_bus_half(
     uint32_t bus,
+    uint32_t half_index,
     uint8_t active_cs_mask,
     uint32_t timestamp_us,
-    const uint32_t *raw_words,
     uint32_t raw_word_count
 ) {
     spi_monitor_bus_runtime_t *bus_runtime = &g_spi_monitor_bus_runtimes[bus];
+    uint32_t first_lane = spi_monitor_bus_first_lane(bus);
+    const spi_monitor_lane_state_t *mosi_lane = &g_spi_monitor_lanes[first_lane];
+    const spi_monitor_lane_state_t *miso_lane = &g_spi_monitor_lanes[first_lane + 1u];
+    const uint32_t *mosi_raw_words = g_spi_monitor_lane_dma_buffers[first_lane][half_index];
+    const uint32_t *miso_raw_words = g_spi_monitor_lane_dma_buffers[first_lane + 1u][half_index];
     uint8_t active_slot;
 
-    if ((raw_words == NULL) || (raw_word_count == 0u) || !g_spi_monitor_buses[bus].running) {
+    if ((raw_word_count == 0u) || !g_spi_monitor_buses[bus].running) {
         return;
     }
 
@@ -429,16 +453,25 @@ static void spi_monitor_process_bus_buffer(
     spi_monitor_open_bus_transaction(bus, active_slot, timestamp_us);
 
     for (uint32_t word_index = 0u; word_index < raw_word_count; ++word_index) {
-        uint32_t packed_samples = raw_words[word_index];
+        uint32_t packed_mosi_samples = mosi_raw_words[word_index];
+        uint32_t packed_miso_samples = miso_raw_words[word_index];
 
         for (uint32_t sample_in_word = 0u; sample_in_word < SPI_MONITOR_SAMPLES_PER_WORD; ++sample_in_word) {
-            uint8_t sample = (uint8_t)((packed_samples >> 21u) & 0x07u);
+            uint8_t mosi_sample = (uint8_t)((packed_mosi_samples >> 21u) & 0x07u);
+            uint8_t miso_sample = (uint8_t)((packed_miso_samples >> 21u) & 0x07u);
+            uint8_t mosi_bit = (uint8_t)((mosi_sample >> mosi_lane->sample_bit_index) & 0x01u);
+            uint8_t miso_bit = 0u;
             uint32_t channel = spi_monitor_bus_slot_to_channel(bus, bus_runtime->active_slot);
             spi_monitor_channel_state_t *channel_state = &g_spi_monitor_channels[channel];
 
-            packed_samples <<= SPI_MONITOR_BITS_PER_SAMPLE;
-            bus_runtime->mosi_byte = (uint8_t)((bus_runtime->mosi_byte << 1u) | ((sample >> 1u) & 0x01u));
-            bus_runtime->miso_byte = (uint8_t)((bus_runtime->miso_byte << 1u) | ((sample >> 2u) & 0x01u));
+            if (channel_state->capture == SPI_MONITOR_CAPTURE_MOSI_MISO) {
+                miso_bit = (uint8_t)((miso_sample >> miso_lane->sample_bit_index) & 0x01u);
+            }
+
+            packed_mosi_samples <<= SPI_MONITOR_BITS_PER_SAMPLE;
+            packed_miso_samples <<= SPI_MONITOR_BITS_PER_SAMPLE;
+            bus_runtime->mosi_byte = (uint8_t)((bus_runtime->mosi_byte << 1u) | mosi_bit);
+            bus_runtime->miso_byte = (uint8_t)((bus_runtime->miso_byte << 1u) | miso_bit);
             bus_runtime->bit_count += 1u;
             if (bus_runtime->bit_count != 8u) {
                 continue;
@@ -458,6 +491,23 @@ static void spi_monitor_process_bus_buffer(
     }
 
     bus_runtime->last_activity_timestamp_us = timestamp_us;
+}
+
+/** @brief Decode one authoritative raw SPI buffer for one observed bus and emit fixed trace packets. */
+static void spi_monitor_process_bus_buffer(
+    uint32_t bus,
+    uint8_t active_cs_mask,
+    uint32_t timestamp_us,
+    const uint32_t *raw_words,
+    uint32_t raw_word_count
+) {
+    if ((raw_words == NULL) || (raw_word_count == 0u) || !g_spi_monitor_buses[bus].running) {
+        return;
+    }
+
+    memcpy(g_spi_monitor_lane_dma_buffers[spi_monitor_bus_first_lane(bus)][0], raw_words, raw_word_count * sizeof(raw_words[0]));
+    memcpy(g_spi_monitor_lane_dma_buffers[spi_monitor_bus_first_lane(bus) + 1u][0], raw_words, raw_word_count * sizeof(raw_words[0]));
+    spi_monitor_process_bus_half(bus, 0u, active_cs_mask, timestamp_us, raw_word_count);
 }
 
 /** @brief Close timed-out SPI transactions whose chip-select did not explicitly end in time. */
@@ -483,18 +533,36 @@ static void spi_monitor_reset_lane_state(spi_monitor_lane_state_t *lane_state) {
     lane_state->overrun_count = 0u;
 }
 
+/** @brief Drop DMA progress accumulated while SPI trace output is disabled. */
+static void spi_monitor_discard_lane_backlog(uint32_t lane) {
+    spi_monitor_lane_state_t *lane_state = &g_spi_monitor_lanes[lane];
+    uint32_t transfer_count;
+    uint32_t words_written;
+
+    if (!lane_state->running) {
+        return;
+    }
+
+    transfer_count = dma_channel_hw_addr((uint)lane_state->dma_channel)->transfer_count;
+    words_written = lane_state->last_transfer_count - transfer_count;
+    lane_state->last_transfer_count = transfer_count;
+    lane_state->write_offset_words = (lane_state->write_offset_words + (words_written % SPI_MONITOR_DMA_RING_WORDS)) % SPI_MONITOR_DMA_RING_WORDS;
+}
+
 /** @brief Return the aggregate lane overrun count for one observed SPI bus. */
 static uint32_t spi_monitor_bus_lane_overrun_count(uint32_t bus) {
-    uint32_t total = 0u;
     uint32_t first_lane = spi_monitor_bus_first_lane(bus);
+    uint32_t overrun_count = 0u;
 
-    for (uint32_t lane = first_lane; lane < (first_lane + SPI_MONITOR_LANES_PER_BUS); ++lane) {
-        if (g_spi_monitor_lanes[lane].running) {
-            total += g_spi_monitor_lanes[lane].overrun_count;
+    for (uint32_t bus_lane = 0u; bus_lane < SPI_MONITOR_LANES_PER_BUS; ++bus_lane) {
+        const spi_monitor_lane_state_t *lane_state = &g_spi_monitor_lanes[first_lane + bus_lane];
+
+        if (lane_state->running) {
+            overrun_count += lane_state->overrun_count;
         }
     }
 
-    return total;
+    return overrun_count;
 }
 
 /** @brief Refresh public per-channel counters from the active bus-owned DMA lanes. */
@@ -599,11 +667,11 @@ static void spi_monitor_consume_lane_half(uint32_t lane, uint32_t half_index) {
          * proves to switch CS_N mid-burst without a usable clock gap, upgrade the raw sampler to
          * carry CS bits in the DMA stream and decode those historical CS transitions directly.
          */
-        spi_monitor_process_bus_buffer(
+        spi_monitor_process_bus_half(
             lane_state->bus,
+            half_index,
             spi_monitor_sample_active_cs_mask(lane_state->bus),
             spi_monitor_timestamp_us(),
-            g_spi_monitor_lane_dma_buffers[lane][half_index],
             SPI_MONITOR_DMA_BUFFER_WORDS
         );
     }
@@ -697,13 +765,13 @@ static void spi_monitor_fill_status(uint32_t channel, spi_monitor_channel_status
 static void spi_monitor_fill_bus_status(uint32_t bus, spi_monitor_bus_status_t *status_out) {
     const spi_monitor_bus_state_t *bus_state = &g_spi_monitor_buses[bus];
     uint32_t packets_emitted = 0u;
-    uint32_t overrun_count = 0u;
+    uint32_t sink_overrun_count = 0u;
 
     for (uint32_t channel = spi_monitor_bus_first_channel(bus);
          channel < (spi_monitor_bus_first_channel(bus) + SPI_MONITOR_CS_SLOTS_PER_BUS);
          ++channel) {
         packets_emitted += g_spi_monitor_channels[channel].packets_emitted;
-        overrun_count += g_spi_monitor_channels[channel].overrun_count;
+        sink_overrun_count += g_spi_monitor_channels[channel].sink_overrun_count;
     }
 
     memset(status_out, 0, sizeof(*status_out));
@@ -714,7 +782,7 @@ static void spi_monitor_fill_bus_status(uint32_t bus, spi_monitor_bus_status_t *
     status_out->channel_select_mask = bus_state->channel_select_mask;
     status_out->timeout_us = bus_state->timeout_us;
     status_out->packets_emitted = packets_emitted;
-    status_out->overrun_count = overrun_count;
+    status_out->overrun_count = sink_overrun_count + spi_monitor_bus_lane_overrun_count(bus);
 }
 
 /** @copydoc spi_monitor_init */
@@ -759,13 +827,28 @@ spi_monitor_rc_t spi_monitor_init(void) {
 /** @copydoc spi_monitor_poll */
 void spi_monitor_poll(void) {
     uint32_t now_us = spi_monitor_timestamp_us();
+    bool stream_enabled = spi_monitor_stream_enabled();
+
+    if (!stream_enabled) {
+        for (uint32_t bus = 0u; bus < SPI_MONITOR_BUS_COUNT; ++bus) {
+            spi_monitor_abort_bus_transaction(bus);
+            spi_monitor_refresh_channel_counters(bus);
+        }
+        for (uint32_t lane = 0u; lane < SPI_MONITOR_LANE_COUNT; ++lane) {
+            spi_monitor_discard_lane_backlog(lane);
+        }
+        return;
+    }
 
     for (uint32_t lane = 0u; lane < SPI_MONITOR_LANE_COUNT; ++lane) {
         spi_monitor_poll_lane(lane);
     }
 
-    for (uint32_t bus = 0u; bus < SPI_MONITOR_BUS_COUNT; ++bus) {
-        spi_monitor_poll_bus_timeout(bus, now_us);
+    if (stream_enabled) {
+        for (uint32_t bus = 0u; bus < SPI_MONITOR_BUS_COUNT; ++bus) {
+            spi_monitor_poll_bus_timeout(bus, now_us);
+            spi_monitor_refresh_channel_counters(bus);
+        }
     }
 }
 
@@ -788,10 +871,14 @@ spi_monitor_rc_t spi_monitor_set_bus_config(uint32_t bus, const spi_monitor_bus_
         return SPI_MONITOR_RC_INVALID;
     }
 
+    if ((config->capture != SPI_MONITOR_CAPTURE_DISABLED) && !spi_monitor_stream_enabled()) {
+        return SPI_MONITOR_RC_DISABLED;
+    }
+
     bus_state = &g_spi_monitor_buses[bus];
     first_channel = spi_monitor_bus_first_channel(bus);
-    spi_monitor_close_bus_transaction(bus, 0u);
     if (config->capture == SPI_MONITOR_CAPTURE_DISABLED) {
+        spi_monitor_close_bus_transaction(bus, 0u);
         spi_monitor_apply_bus_lane_capture(bus, SPI_MONITOR_CAPTURE_DISABLED, 0u);
         for (channel = first_channel; channel < (first_channel + SPI_MONITOR_CS_SLOTS_PER_BUS); ++channel) {
             spi_monitor_reset_channel_state(&g_spi_monitor_channels[channel]);
@@ -805,6 +892,7 @@ spi_monitor_rc_t spi_monitor_set_bus_config(uint32_t bus, const spi_monitor_bus_
         return SPI_MONITOR_RC_INVALID;
     }
 
+    spi_monitor_close_bus_transaction(bus, 0u);
     timeout_us = (config->timeout_us != 0u) ? config->timeout_us : SPI_MONITOR_TIMEOUT_US_DEFAULT;
     if (!spi_monitor_apply_bus_lane_capture(bus, config->capture, config->spi_mode)) {
         return SPI_MONITOR_RC_FAILED;
@@ -868,7 +956,47 @@ bool spi_monitor_test_feed_samples(
         return false;
     }
 
+    if (!spi_monitor_stream_enabled()) {
+        spi_monitor_abort_bus_transaction(bus);
+        spi_monitor_refresh_channel_counters(bus);
+        return true;
+    }
+
     spi_monitor_process_bus_buffer(bus, active_cs_mask, timestamp_us, raw_words, raw_word_count);
+    spi_monitor_refresh_channel_counters(bus);
+    return true;
+}
+
+bool spi_monitor_test_feed_dual_lane_samples(
+    uint32_t bus,
+    uint8_t active_cs_mask,
+    uint32_t timestamp_us,
+    const uint32_t *mosi_raw_words,
+    const uint32_t *miso_raw_words,
+    uint32_t raw_word_count
+) {
+    uint32_t first_lane;
+
+    if (!spi_monitor_valid_bus(bus)
+            || (mosi_raw_words == NULL)
+            || (miso_raw_words == NULL)
+            || (raw_word_count == 0u)
+            || (raw_word_count > SPI_MONITOR_DMA_BUFFER_WORDS)) {
+        return false;
+    }
+
+    if (!spi_monitor_stream_enabled()) {
+        spi_monitor_abort_bus_transaction(bus);
+        spi_monitor_refresh_channel_counters(bus);
+        return true;
+    }
+
+    first_lane = spi_monitor_bus_first_lane(bus);
+    memset(g_spi_monitor_lane_dma_buffers[first_lane][0], 0, sizeof(g_spi_monitor_lane_dma_buffers[first_lane][0]));
+    memset(g_spi_monitor_lane_dma_buffers[first_lane + 1u][0], 0, sizeof(g_spi_monitor_lane_dma_buffers[first_lane + 1u][0]));
+    memcpy(g_spi_monitor_lane_dma_buffers[first_lane][0], mosi_raw_words, raw_word_count * sizeof(mosi_raw_words[0]));
+    memcpy(g_spi_monitor_lane_dma_buffers[first_lane + 1u][0], miso_raw_words, raw_word_count * sizeof(miso_raw_words[0]));
+    spi_monitor_process_bus_half(bus, 0u, active_cs_mask, timestamp_us, raw_word_count);
     spi_monitor_refresh_channel_counters(bus);
     return true;
 }
@@ -878,7 +1006,32 @@ void spi_monitor_test_poll_timeout(uint32_t bus, uint32_t timestamp_us) {
         return;
     }
 
+    if (!spi_monitor_stream_enabled()) {
+        spi_monitor_abort_bus_transaction(bus);
+        spi_monitor_refresh_channel_counters(bus);
+        return;
+    }
+
     spi_monitor_poll_bus_timeout(bus, timestamp_us);
+    spi_monitor_refresh_channel_counters(bus);
+}
+
+/**
+ * @brief Inject synthetic DMA overrun counters for both physical data lanes on one observed bus.
+ * @param bus Zero-based observed SPI bus index.
+ * @param mosi_overruns Completed-half overruns to assign to the MOSI lane.
+ * @param miso_overruns Completed-half overruns to assign to the MISO lane.
+ */
+void spi_monitor_test_set_lane_overrun_counts(uint32_t bus, uint32_t mosi_overruns, uint32_t miso_overruns) {
+    uint32_t first_lane;
+
+    if (!spi_monitor_valid_bus(bus)) {
+        return;
+    }
+
+    first_lane = spi_monitor_bus_first_lane(bus);
+    g_spi_monitor_lanes[first_lane].overrun_count = mosi_overruns;
+    g_spi_monitor_lanes[first_lane + 1u].overrun_count = miso_overruns;
     spi_monitor_refresh_channel_counters(bus);
 }
 #endif

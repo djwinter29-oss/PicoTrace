@@ -204,10 +204,17 @@ That means PicoTrace is intentionally focused on the common case:
 The unsupported corner case is a master that changes `CS_N` fast enough inside one half-buffer that
 no reliable gap exists for buffer-handoff attribution.
 
+There is also a deliberate lane-delivery choice in dual-lane SPI mode: MOSI and MISO are captured
+on separate DMA-backed lanes, but PicoTrace does not require those two lanes to complete or be
+decoded in strict lockstep before content is delivered to the host. The current architecture treats
+"deliver both directions for the logical transaction" as the primary goal and does not guarantee
+cycle-accurate or byte-perfect lane-to-lane synchronization as part of the public SPI contract.
+
 Current mitigation:
 
 - document the limitation explicitly
 - treat timeout and observed `CS_N` changes as normal transaction boundaries in the supported case
+- document that dual-lane delivery is content-first rather than synchronization-first
 - keep the implementation small until a target system proves that per-sample `CS_N` capture is
     required
 

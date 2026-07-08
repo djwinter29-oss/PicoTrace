@@ -201,6 +201,13 @@ The payload format is currently:
 This is the current implemented contract. Host-side decode should treat `meta` as the lane-mode
 selector that tells it whether payload bytes are MOSI-only or MOSI/MISO interleaved pairs.
 
+That interleaved dual-lane layout is a delivery format, not a timing guarantee. PicoTrace's
+current SPI monitor is content-first: in `SPI_MONITOR_CAPTURE_MOSI_MISO` mode it aims to deliver
+both MOSI and MISO content for the same `CS_N`-owned logical transaction, but it does not promise
+that the two physical lanes were buffer-synchronized or phase-aligned at every byte boundary.
+Host software should therefore treat the payload as two delivered directional streams encoded into
+one packet format, not as proof of cycle-accurate MOSI/MISO lockstep.
+
 ## Timeout Rule
 
 The timeout exists only to terminate a stalled or abandoned transaction when no explicit `CS_N`
@@ -216,9 +223,16 @@ This design fixes the monitor start modes and the current emitted packet format:
 - MOSI-only monitoring must capture controller-to-peripheral data
 - MOSI+MISO monitoring must capture both directions for the same transaction
 
+The feature goal for MOSI+MISO mode is delivery completeness, not lane synchronization. The
+monitor intentionally does not require MOSI and MISO DMA half-buffers to retire in lockstep before
+forwarding decoded content to the user. That keeps the producer path simple and aligned with the
+current PicoTrace target: low-cost passive capture where getting both directions to the host is
+more important than proving exact cross-lane timing alignment.
+
 The current implementation represents MOSI+MISO data as interleaved byte pairs in the payload and
 uses `trace_packet_header_t.meta` to carry the active capture mode so the host can distinguish the
-layout.
+layout. Consumers that need exact per-byte pairing or stronger cross-lane timing guarantees should
+treat that as out of scope for the current design.
 
 ## Sequence And Timestamp Intent
 
