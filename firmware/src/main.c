@@ -44,7 +44,9 @@ int main(void) {
     trace_ring_init();
     tusb_init();
     device_cli_init(&bridge_device_cli_transport);
-    i2c_monitor_init();
+    if (!i2c_monitor_init()) {
+        return 1;
+    }
 
     while (true) {
         tud_task();

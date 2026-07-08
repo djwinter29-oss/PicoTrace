@@ -19,6 +19,7 @@ add_executable(picotrace
     src/driver/led.c
     src/driver/system.c
     src/trace/decode/i2c_decoder.c
+    src/trace/decode/i2c_trace_packet.c
     src/trace/capture/i2c_monitor.c
     src/trace/trace_ring.c
     src/usb_stream.c

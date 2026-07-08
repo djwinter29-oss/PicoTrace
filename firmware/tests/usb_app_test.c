@@ -8,7 +8,8 @@
 #include "app_control.h"
 #include "cli/device_cli.h"
 #include "driver/system.h"
-#include "trace/decode/i2c_decoder.h"
+#include "trace/decode/i2c_decoder_test.h"
+#include "trace/decode/i2c_trace_packet_test.h"
 #include "trace/trace_ring.h"
 #include "usb_stream.h"
 #include "usb/usb_cdc.h"
@@ -447,105 +448,6 @@ static void test_trace_ring_reports_full_and_counts_drop(void) {
     assert(trace_ring_high_watermark() == TRACE_RING_CAPACITY);
 }
 
-static void append_i2c_sample(uint8_t *samples, uint32_t *sample_count, bool sda, bool scl, uint32_t repeats) {
-    uint8_t encoded = (uint8_t)((sda ? 0x01u : 0u) | (scl ? 0x02u : 0u));
-
-    for (uint32_t index = 0u; index < repeats; ++index) {
-        samples[*sample_count] = encoded;
-        *sample_count += 1u;
-    }
-}
-
-static void append_i2c_bit(uint8_t *samples, uint32_t *sample_count, uint8_t bit_value) {
-    append_i2c_sample(samples, sample_count, bit_value != 0u, false, 2u);
-    append_i2c_sample(samples, sample_count, bit_value != 0u, true, 2u);
-    append_i2c_sample(samples, sample_count, bit_value != 0u, false, 2u);
-}
-
-static uint32_t pack_i2c_samples(uint32_t *raw_words, uint32_t raw_capacity, const uint8_t *samples, uint32_t sample_count) {
-    uint32_t word_count = (sample_count + 15u) / 16u;
-
-    assert(word_count <= raw_capacity);
-    memset(raw_words, 0, raw_capacity * sizeof(raw_words[0]));
-
-    for (uint32_t sample_index = 0u; sample_index < sample_count; ++sample_index) {
-        uint32_t word_index = sample_index / 16u;
-        uint32_t shift = 30u - ((sample_index & 0x0Fu) * 2u);
-        raw_words[word_index] |= ((uint32_t)(samples[sample_index] & 0x03u) << shift);
-    }
-
-    return word_count;
-}
-
-typedef struct {
-    i2c_decode_event_t events[32];
-    uint32_t count;
-} test_i2c_event_capture_t;
-
-static bool capture_i2c_event(void *context, uint8_t event_type, uint8_t event_value) {
-    test_i2c_event_capture_t *capture = (test_i2c_event_capture_t *)context;
-
-    assert(capture->count < 32u);
-    capture->events[capture->count].type = event_type;
-    capture->events[capture->count].value = event_value;
-    capture->count += 1u;
-    return true;
-}
-
-static void test_i2c_decoder_emits_events_from_oversampled_buffer(void) {
-    i2c_decoder_state_t decoder_state;
-    uint8_t samples[256];
-    uint32_t raw_words[16];
-    uint32_t sample_count = 0u;
-    uint32_t raw_word_count;
-    test_i2c_event_capture_t capture = {0};
-
-    reset_usb_stub();
-    i2c_decoder_init(&decoder_state);
-
-    append_i2c_sample(samples, &sample_count, true, true, 3u);
-    append_i2c_sample(samples, &sample_count, false, true, 3u);
-
-    append_i2c_bit(samples, &sample_count, 1u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 1u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 0u);
-
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 1u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 1u);
-    append_i2c_bit(samples, &sample_count, 1u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 1u);
-    append_i2c_bit(samples, &sample_count, 0u);
-    append_i2c_bit(samples, &sample_count, 0u);
-
-    append_i2c_sample(samples, &sample_count, false, false, 2u);
-    append_i2c_sample(samples, &sample_count, false, true, 2u);
-    append_i2c_sample(samples, &sample_count, true, true, 3u);
-
-    raw_word_count = pack_i2c_samples(raw_words, 16u, samples, sample_count);
-
-    assert(i2c_decoder_process_buffer(&decoder_state, raw_words, raw_word_count, capture_i2c_event, &capture) == true);
-    assert(capture.count == 6u);
-    assert(capture.events[0].type == I2C_DECODE_EVENT_START);
-    assert(capture.events[1].type == I2C_DECODE_EVENT_DATA);
-    assert(capture.events[1].value == 0xA0u);
-    assert(capture.events[2].type == I2C_DECODE_EVENT_ACK);
-    assert(capture.events[2].value == 0u);
-    assert(capture.events[3].type == I2C_DECODE_EVENT_DATA);
-    assert(capture.events[3].value == 0x5Au);
-    assert(capture.events[4].type == I2C_DECODE_EVENT_ACK);
-    assert(capture.events[4].value == 0u);
-    assert(capture.events[5].type == I2C_DECODE_EVENT_STOP);
-}
-
 static void test_usb_stream_drains_trace_packet_before_placeholder(void) {
     trace_packet_t packet = make_test_trace_packet(31u);
     uint32_t packet_bytes = TRACE_PACKET_HEADER_BYTES + packet.header.payload_len;
@@ -666,7 +568,8 @@ int main(void) {
     test_trace_ring_pop_copy_returns_owned_packet();
     test_trace_ring_pop_copy_advances_past_peeked_packet();
     test_trace_ring_reports_full_and_counts_drop();
-    test_i2c_decoder_emits_events_from_oversampled_buffer();
+    run_i2c_decoder_tests();
+    run_i2c_trace_packet_tests();
     test_usb_stream_drains_trace_packet_before_placeholder();
     test_usb_stream_resumes_partial_trace_packet_write();
     test_poll_emits_example_frame();

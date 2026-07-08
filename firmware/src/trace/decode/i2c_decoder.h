@@ -23,12 +23,20 @@ typedef struct {
     uint8_t value; /**< Event payload value, such as a byte value or ACK bit state. */
 } i2c_decode_event_t;
 
+/** @brief Result returned after decoding one completed raw sample buffer. */
+typedef enum {
+    I2C_DECODER_RESULT_OK = 0u, /**< Buffer was fully consumed and all emitted events were accepted. */
+    I2C_DECODER_RESULT_INVALID_INPUT = 1u, /**< Caller passed invalid arguments, so no decoding occurred. */
+    I2C_DECODER_RESULT_SINK_REJECTED = 2u, /**< Buffer was fully consumed, but the sink rejected at least one event. */
+} i2c_decoder_result_t;
+
 /** @brief Caller-owned decode state carried across consecutive ping-pong buffers. */
 typedef struct {
     bool have_previous_levels; /**< Indicates whether the decoder already has one previous sampled SDA/SCL level pair. */
     bool previous_sda; /**< Previously observed SDA level for edge detection across sample boundaries. */
     bool previous_scl; /**< Previously observed SCL level for edge detection across sample boundaries. */
     bool transaction_active; /**< Indicates whether the decoder is currently inside an active I2C transaction. */
+    uint8_t pending_event; /**< Pending START or STOP candidate awaiting one more confirming sample while SCL stays high. */
     uint8_t bit_count; /**< Number of data bits already shifted into @ref current_byte for the active byte. */
     uint8_t current_byte; /**< Byte under construction from oversampled SCL rising-edge captures. */
 } i2c_decoder_state_t;
@@ -38,8 +46,8 @@ typedef struct {
  * @param context Caller-owned callback context.
  * @param event_type Event type encoded as @ref i2c_decode_event_type_t.
  * @param event_value Event payload value, such as a byte value or ACK bit state.
- * @return `true` to continue decoding, or `false` to stop because the caller could not accept the
- * event.
+ * @return `true` to continue decoding, or `false` to stop emitting because the caller could not
+ * accept the event.
  */
 typedef bool (*i2c_decoder_event_sink_t)(void *context, uint8_t event_type, uint8_t event_value);
 
@@ -57,10 +65,10 @@ void i2c_decoder_init(i2c_decoder_state_t *state);
  * @param event_sink Callback invoked for each decoded event. Pass `NULL` to advance state without
  * emitting any decoded output.
  * @param event_sink_context Caller-owned callback context passed back to @p event_sink.
- * @return `true` when decoding completed successfully, or `false` if the input was invalid or the
- * event sink rejected one of the decoded events.
+ * @return Decode result describing whether the input was invalid, all emitted events were
+ * accepted, or one emitted event was rejected by the sink.
  */
-bool i2c_decoder_process_buffer(
+i2c_decoder_result_t i2c_decoder_process_buffer(
     i2c_decoder_state_t *state,
     const uint32_t *raw_words,
     uint32_t raw_word_count,

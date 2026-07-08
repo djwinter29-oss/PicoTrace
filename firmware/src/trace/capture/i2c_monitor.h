@@ -9,11 +9,15 @@
 #ifndef I2C_MONITOR_H
 #define I2C_MONITOR_H
 
+#include <stdbool.h>
+
 /**
  * @brief Initialize the I2C sampler state machines, DMA channels, and ping-pong buffers.
  *
  * This function is idempotent. Repeated calls after successful initialization have no effect.
+ * Repeated calls after a failed initialization return `false` without retrying.
+ * @return `true` when every sampler channel was initialized, or `false` when setup failed.
  */
-void i2c_monitor_init(void);
+bool i2c_monitor_init(void);
 
 #endif
