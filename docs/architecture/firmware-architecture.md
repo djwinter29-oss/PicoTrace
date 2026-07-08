@@ -53,7 +53,7 @@ flowchart LR
 
     subgraph Core1[Core 1: producer owner]
         I2CCAP[I2C monitor / decode / packetize]
-        SPICAP[SPI monitor scaffold / future packetize]
+        SPICAP[SPI monitor / decode / packetize]
     end
 
     CLI <--> CDC
@@ -104,7 +104,7 @@ Core 1 owns:
 - producer-side monitor control executors
 - I2C monitor runtime polling
 - SPI monitor runtime polling
-- future producer-side packetization work for SPI
+- producer-side SPI packetization into the shared trace ring
 
 This keeps sampling, monitor state, and protocol-specific producer behavior away from the USB owner.
 
@@ -159,10 +159,14 @@ For I2C, the current architecture already includes:
 - packet assembly
 - handoff into the shared trace ring
 
-For SPI, the architecture is the same in shape, but the runtime is still scaffolded rather than fully
-implemented.
+For SPI, the current architecture now also includes:
 
-Both protocols are expected to feed the same shared packet and USB streaming model.
+- clocked sampling
+- transaction attribution by observed `CS_N`
+- packet assembly
+- handoff into the shared trace ring
+
+Both protocols now feed the same shared packet and USB streaming model.
 
 ### Trace Ring
 

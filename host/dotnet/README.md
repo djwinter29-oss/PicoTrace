@@ -1,6 +1,6 @@
 # .NET Host Library
 
-This folder contains a minimal .NET bulk-capture console app named `PicoTrace`.
+This folder contains a minimal .NET bulk-capture console app in `PicoTrace/`.
 
 It also reserves `PicoTrace.Tests/` for future unit tests.
 

@@ -39,7 +39,7 @@ usually less reliable than keeping USB ownership on one core and handing off dat
 - `firmware/src/usb/usb_cdc.*`: CDC transport and raw byte queue
 - `firmware/src/usb/usb_bulk.*`: Bulk streaming transport code
 - `firmware/src/usb/usb_hid.*`: HID transport and request/response state code
-- `firmware/src/usb_stream.*`: trace stream plumbing and placeholder producer logic that can be replaced as the capture path matures
+- `firmware/src/usb_stream.*`: trace stream plumbing that bridges completed trace packets from `trace_ring` into the vendor bulk transport
 - `firmware/src/usb/usb_descriptors.c`: USB device, interface, and string descriptor definitions
 - `tools/`: helper scripts for build, flash, and host-side CDC testing
 - `docs/`: short project notes covering trace transport and capture design

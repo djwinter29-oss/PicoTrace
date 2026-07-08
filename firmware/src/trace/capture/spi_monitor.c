@@ -55,7 +55,6 @@ typedef struct {
     uint32_t packets_emitted; /**< Number of emitted trace packet fragments in the current session. */
     uint32_t sink_overrun_count; /**< Number of fragments dropped because the shared trace ring rejected them. */
     uint32_t overrun_count; /**< Number of dropped completed fragments in the current session. */
-    spi_monitor_packet_builder_t packet_builder; /**< Fixed-packet builder that owns the current SPI fragment. */
 } spi_monitor_channel_state_t;
 
 /** @brief Runtime state shared by all logical channels that sit on one observed SPI bus. */
@@ -75,6 +74,7 @@ typedef struct {
     uint8_t mosi_byte; /**< MOSI byte currently under construction. */
     uint8_t miso_byte; /**< MISO byte currently under construction. */
     uint32_t last_activity_timestamp_us; /**< Timestamp of the most recently processed buffer attributed to this transaction. */
+    spi_monitor_packet_builder_t packet_builder; /**< Fixed-packet builder that owns the active bus transaction fragment. */
 } spi_monitor_bus_runtime_t;
 
 /** @brief DMA-backed sampler state owned by one physical SPI data lane. */
@@ -240,11 +240,7 @@ static void spi_monitor_reset_bus_runtime(spi_monitor_bus_runtime_t *bus_runtime
 
 /** @brief Discard any open SPI packet builders owned by one observed bus. */
 static void spi_monitor_discard_bus_packets(uint32_t bus) {
-    uint32_t first_channel = spi_monitor_bus_first_channel(bus);
-
-    for (uint32_t channel = first_channel; channel < (first_channel + SPI_MONITOR_CS_SLOTS_PER_BUS); ++channel) {
-        spi_monitor_packet_builder_reset(&g_spi_monitor_channels[channel].packet_builder);
-    }
+    spi_monitor_packet_builder_reset(&g_spi_monitor_bus_runtimes[bus].packet_builder);
 }
 
 /** @brief Abort one observed SPI bus transaction without flushing any partial fragment to the ring. */
@@ -304,12 +300,11 @@ static void spi_monitor_packet_builder_mark_next(spi_monitor_packet_builder_t *b
 
 /** @brief Open a new fixed SPI trace packet fragment for one logical channel. */
 static void spi_monitor_packet_builder_begin(
+    spi_monitor_packet_builder_t *builder,
     spi_monitor_channel_state_t *channel_state,
     uint8_t logical_channel,
     uint32_t timestamp_us
 ) {
-    spi_monitor_packet_builder_t *builder = &channel_state->packet_builder;
-
     builder->packet.header.version = TRACE_PACKET_VERSION;
     builder->packet.header.type = TRACE_TYPE_SPI;
     builder->packet.header.channel = logical_channel;
@@ -328,12 +323,11 @@ static void spi_monitor_packet_builder_begin(
 
 /** @brief Flush the currently open SPI packet fragment into the shared trace ring. */
 static bool spi_monitor_packet_builder_flush(
+    spi_monitor_packet_builder_t *builder,
     spi_monitor_channel_state_t *channel_state,
     uint8_t final_flags,
     bool end_of_transaction
 ) {
-    spi_monitor_packet_builder_t *builder = &channel_state->packet_builder;
-
     if (!builder->packet_open) {
         builder->transaction_fragmented = false;
         return true;
@@ -361,22 +355,22 @@ static bool spi_monitor_packet_builder_flush(
 
 /** @brief Append one SPI data byte pair to the current logical channel transaction. */
 static bool spi_monitor_channel_append_byte_pair(
+    spi_monitor_packet_builder_t *builder,
     spi_monitor_channel_state_t *channel_state,
     uint8_t logical_channel,
     uint32_t timestamp_us,
     uint8_t mosi_byte,
     uint8_t miso_byte
 ) {
-    spi_monitor_packet_builder_t *builder = &channel_state->packet_builder;
     uint16_t bytes_needed = (channel_state->capture == SPI_MONITOR_CAPTURE_MOSI_MISO) ? 2u : 1u;
 
     if (!builder->packet_open) {
-        spi_monitor_packet_builder_begin(channel_state, logical_channel, timestamp_us);
+        spi_monitor_packet_builder_begin(builder, channel_state, logical_channel, timestamp_us);
     }
 
     if ((builder->payload_offset + bytes_needed) > TRACE_PACKET_PAYLOAD_BYTES) {
-        (void)spi_monitor_packet_builder_flush(channel_state, 0u, false);
-        spi_monitor_packet_builder_begin(channel_state, logical_channel, timestamp_us);
+        (void)spi_monitor_packet_builder_flush(builder, channel_state, 0u, false);
+        spi_monitor_packet_builder_begin(builder, channel_state, logical_channel, timestamp_us);
     }
 
     builder->packet.payload[builder->payload_offset++] = mosi_byte;
@@ -403,7 +397,7 @@ static void spi_monitor_close_bus_transaction(uint32_t bus, uint8_t closing_flag
         if (bus_runtime->bit_count != 0u) {
             closing_flags |= TRACE_FLAG_TRUNCATED;
         }
-        (void)spi_monitor_packet_builder_flush(channel_state, closing_flags, true);
+        (void)spi_monitor_packet_builder_flush(&bus_runtime->packet_builder, channel_state, closing_flags, true);
     }
 
     spi_monitor_reset_bus_runtime(bus_runtime);
@@ -483,6 +477,7 @@ static void spi_monitor_process_bus_half(
             }
 
             (void)spi_monitor_channel_append_byte_pair(
+                &bus_runtime->packet_builder,
                 channel_state,
                 g_spi_monitor_logical_channels[channel],
                 timestamp_us,
@@ -749,7 +744,6 @@ static void spi_monitor_reset_channel_state(spi_monitor_channel_state_t *channel
     channel_state->packets_emitted = 0u;
     channel_state->sink_overrun_count = 0u;
     channel_state->overrun_count = 0u;
-    spi_monitor_packet_builder_reset(&channel_state->packet_builder);
 }
 
 /** @brief Materialize one logical channel state into the public status snapshot. */
@@ -918,7 +912,6 @@ spi_monitor_rc_t spi_monitor_set_bus_config(uint32_t bus, const spi_monitor_bus_
         channel_state->packets_emitted = 0u;
         channel_state->sink_overrun_count = 0u;
         channel_state->overrun_count = 0u;
-        spi_monitor_packet_builder_reset(&channel_state->packet_builder);
     }
     spi_monitor_reset_bus_runtime(&g_spi_monitor_bus_runtimes[bus]);
     return SPI_MONITOR_RC_OK;
