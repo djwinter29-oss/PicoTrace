@@ -764,6 +764,63 @@ static void test_spi_monitor_poll_timeout_refreshes_channel_overrun_status(void)
     assert(status[0].overrun_count == 1u);
 }
 
+/** @brief Verify that a fragment emitted after mid-transaction overflow still carries CONTINUED. */
+static void test_spi_monitor_overflow_preserves_continued_for_same_transaction(void) {
+    spi_monitor_bus_config_t config = {0};
+    trace_packet_t filler = make_test_trace_packet(1u);
+    trace_packet_t packet = {0};
+    uint32_t raw_word[1];
+    uint8_t expected_retry_byte = 0u;
+    uint32_t index;
+
+    reset_real_spi_monitor_state();
+    trace_ring_init();
+    config.capture = SPI_MONITOR_CAPTURE_MOSI;
+    config.spi_mode = 0u;
+    config.channel_select_mask = 0x01u;
+    config.timeout_us = 1000u;
+
+    assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
+
+    for (index = 0u; index < (TRACE_PACKET_PAYLOAD_BYTES + 1u); ++index) {
+        raw_word[0] = pack_spi_byte_word((uint8_t)index, 0u);
+        assert(spi_monitor_test_feed_samples(0u, 0x01u, 10u, raw_word, 1u) == true);
+    }
+
+    assert(trace_ring_available() == 1u);
+
+    for (index = 0u; index < (TRACE_RING_CAPACITY - 1u); ++index) {
+        filler.header.sequence = (uint16_t)index;
+        assert(trace_ring_push(&filler) == true);
+    }
+
+    for (index = 0u; index < TRACE_PACKET_PAYLOAD_BYTES; ++index) {
+        raw_word[0] = pack_spi_byte_word((uint8_t)(0x40u + index), 0u);
+        expected_retry_byte = (uint8_t)(0x40u + index);
+        assert(spi_monitor_test_feed_samples(0u, 0x01u, 20u, raw_word, 1u) == true);
+    }
+
+    raw_word[0] = pack_spi_byte_word(0xE1u, 0u);
+    assert(spi_monitor_test_feed_samples(0u, 0x01u, 30u, raw_word, 1u) == true);
+
+    while (trace_ring_available() != 0u) {
+        assert(trace_ring_pop_copy(&packet) == true);
+    }
+
+    assert(spi_monitor_test_feed_samples(0u, 0x01u, 40u, raw_word, 1u) == true);
+    spi_monitor_test_poll_timeout(0u, 2000u);
+
+    assert(trace_ring_available() == 1u);
+    assert(trace_ring_pop_copy(&packet) == true);
+    assert((packet.header.flags & TRACE_FLAG_OVERFLOW) != 0u);
+    assert((packet.header.flags & TRACE_FLAG_CONTINUED) != 0u);
+    assert((packet.header.flags & TRACE_FLAG_END) != 0u);
+    assert(packet.header.payload_len == 3u);
+    assert(packet.payload[0] == expected_retry_byte);
+    assert(packet.payload[1] == 0xE1u);
+    assert(packet.payload[2] == 0xE1u);
+}
+
 static void test_cli_help_writes_response_without_connected_flag(void) {
     static const uint8_t payload[] = {'h', 'e', 'l', 'p', '\r'};
 
@@ -1615,6 +1672,7 @@ int main(void) {
     test_spi_monitor_open_transaction_does_not_count_packet_before_ring_push();
     test_spi_monitor_dual_lane_overruns_are_aggregated_in_status();
     test_spi_monitor_poll_timeout_refreshes_channel_overrun_status();
+    test_spi_monitor_overflow_preserves_continued_for_same_transaction();
     test_cli_unknown_command_writes_fixed_helper();
     test_cli_help_writes_response_without_connected_flag();
     test_cli_help_is_flushed_after_temporary_tx_backpressure();

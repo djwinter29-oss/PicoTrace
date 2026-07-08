@@ -225,6 +225,13 @@ static void spi_monitor_packet_builder_reset(spi_monitor_packet_builder_t *build
     memset(&builder->packet, 0, sizeof(builder->packet));
 }
 
+/** @brief Drop only the currently open SPI fragment while preserving transaction-level continuation state. */
+static void spi_monitor_packet_builder_drop_open_packet(spi_monitor_packet_builder_t *builder) {
+    builder->packet_open = false;
+    builder->payload_offset = 0u;
+    memset(&builder->packet, 0, sizeof(builder->packet));
+}
+
 /** @brief Reset the active transaction state for one observed SPI bus. */
 static void spi_monitor_reset_bus_runtime(spi_monitor_bus_runtime_t *bus_runtime) {
     memset(bus_runtime, 0, sizeof(*bus_runtime));
@@ -339,7 +346,7 @@ static bool spi_monitor_packet_builder_flush(
     builder->packet.header.payload_len = (uint16_t)builder->payload_offset;
     if (!spi_monitor_push_trace_packet(&builder->packet)) {
         channel_state->sink_overrun_count += 1u;
-        spi_monitor_packet_builder_reset(builder);
+        spi_monitor_packet_builder_drop_open_packet(builder);
         spi_monitor_packet_builder_mark_next(builder, TRACE_FLAG_OVERFLOW);
         return false;
     }
@@ -368,9 +375,7 @@ static bool spi_monitor_channel_append_byte_pair(
     }
 
     if ((builder->payload_offset + bytes_needed) > TRACE_PACKET_PAYLOAD_BYTES) {
-        if (!spi_monitor_packet_builder_flush(channel_state, 0u, false)) {
-            return false;
-        }
+        (void)spi_monitor_packet_builder_flush(channel_state, 0u, false);
         spi_monitor_packet_builder_begin(channel_state, logical_channel, timestamp_us);
     }
 
