@@ -4,9 +4,9 @@ PicoTrace is a low-cost protocol tracing tool built around the RP2040 and RP2350
 currently centered on passive SPI transaction capture and passive I2C transaction capture.
 
 The firmware uses a shared USB device model across both protocols: TinyUSB composite descriptors,
-a bounded CDC host-control path, and a vendor bulk stream for high-rate trace delivery. The host-
-visible control model stays the same whether the producer side is packaging SPI traffic or I2C
-traffic.
+a bounded CDC command path, a HID control path, and a vendor bulk stream for high-rate trace
+delivery. The host-visible control model stays the same whether the producer side is packaging SPI
+traffic or I2C traffic.
 
 For reliable streaming, the preferred shape is to keep all USB stack interaction on one core and
 move sampling or packet preparation to the other core only when needed. USB class traffic still
@@ -18,7 +18,8 @@ usually less reliable than keeping USB ownership on one core and handing off dat
 - RP2040 and RP2350 firmware project structure using CMake and the Pico SDK
 - TinyUSB composite USB device configuration for trace streaming and low-rate host control
 - USB descriptor definitions and serial-number wiring
-- A CDC interface for simple host control and status exchange
+- A CDC interface for simple device CLI access and status exchange
+- A HID interface for structured host control and status exchange
 - A vendor bulk interface for trace data streaming
 - A fixed-slot trace packet ring sized for SPI and I2C transaction capture workloads
 - Host-side capture helpers for bulk trace intake
@@ -58,6 +59,13 @@ See `docs/streaming-design.md` for the recommended ownership model for passive S
 with reliable streaming plus low-rate host control.
 
 ## Building for Pico and Pico 2
+
+Firmware builds require the Raspberry Pi Pico SDK.
+
+- Windows: set `PICO_SDK_PATH` in your shell or in `tools/windows/.env.ps1`, or place the SDK at `C:\src\pico-sdk` to use the script's default lookup.
+- Linux: export `PICO_SDK_PATH` before running the firmware build or load scripts.
+
+Programming through the load scripts also requires OpenOCD. The Linux load script expects `openocd` on `PATH` by default, and both Windows and Linux let you override the target config when needed.
 
 The firmware CMake project defaults to `PICO_BOARD=pico`.
 

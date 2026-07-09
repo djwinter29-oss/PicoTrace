@@ -1,6 +1,6 @@
 # PicoTrace Copilot Instructions
 
-This repository contains PicoTrace, a low-cost RP2040-based protocol tracing tool currently
+This repository contains PicoTrace, a low-cost protocol tracing tool built around the RP2040 and RP2350 families, currently
 centered on passive SPI transaction capture and passive I2C transaction capture.
 
 ## Engineering Style
@@ -89,7 +89,7 @@ Lazy code without its check is unfinished. For non-trivial logic, leave one runn
 
 ## Documentation Guidance
 
-- Describe the repository as PicoTrace, a low-cost RP2040 protocol tracer
+- Describe the repository as PicoTrace, a low-cost RP2040/RP2350 protocol tracer
 - Be explicit about which files implement shared USB scaffolding versus SPI/I2C trace-specific behavior
 - Keep documentation concise and practical
 - Keep SPI and I2C support described as passive transaction capture on a shared USB host-control model
@@ -112,4 +112,4 @@ Lazy code without its check is unfinished. For non-trivial logic, leave one runn
 - Keep changes narrowly scoped to the requested behavior
 - Do not add unrelated tooling or interfaces
 - Prefer PicoTrace naming on the user-facing USB surface unless the task says otherwise
-- Keep host naming aligned with the current public surfaces: Python package `picotrace`, CLI `picotrace-capture`, and .NET project `PicoTrace`
+- Keep host naming aligned with the current public surfaces: Python package `picotrace`, CLI `picotrace`, and .NET project `PicoTrace`
