@@ -1,17 +1,21 @@
 from __future__ import annotations
 
-import argparse
+"""PyUSB transport for reading PicoTrace packets from the current USB bulk IN path."""
+
 import array
+from collections.abc import Callable
 import os
+from pathlib import Path
 import platform
 import sys
 import time
-from dataclasses import dataclass
-from pathlib import Path
 
-import usb.core
 import usb.backend.libusb1
+import usb.core
 import usb.util
+
+from .decode import TracePacket, TraceStreamDecoder
+from .filter import TraceChannelRegistry
 
 
 DEFAULT_VID = 0xCAFE
@@ -20,18 +24,6 @@ DEFAULT_VENDOR_IN_ENDPOINT = 0x83
 DEFAULT_DURATION_SECONDS = 20.0
 DEFAULT_READ_SIZE = 16384
 DEFAULT_TIMEOUT_MS = 250
-
-
-@dataclass(frozen=True)
-class CaptureStats:
-    total_bytes: int
-    elapsed_seconds: float
-
-    @property
-    def bytes_per_second(self) -> float:
-        if self.elapsed_seconds <= 0.0:
-            return 0.0
-        return self.total_bytes / self.elapsed_seconds
 
 
 def _candidate_libusb_paths() -> list[Path]:
@@ -83,26 +75,20 @@ def _get_libusb_backend() -> usb.backend.libusb1._LibUSB:  # type: ignore[attr-d
     raise RuntimeError("No libusb backend available. Install libusb-1.0 and ensure your user can access the device.")
 
 
-def _find_device(vid: int, pid: int) -> usb.core.Device:
-    backend = _get_libusb_backend()
-    device = usb.core.find(idVendor=vid, idProduct=pid, backend=backend)
+def find_usb_device(vid: int, pid: int) -> usb.core.Device:
+    device = usb.core.find(idVendor=vid, idProduct=pid, backend=_get_libusb_backend())
     if device is None:
         raise RuntimeError(f"Device {vid:04x}:{pid:04x} not found")
     return device
 
 
-def _find_vendor_interface(device: usb.core.Device, endpoint_address: int) -> usb.core.Interface:
-    configuration = device.get_active_configuration()
+def open_trace_device(
+    vid: int = DEFAULT_VID,
+    pid: int = DEFAULT_PID,
+    endpoint_address: int = DEFAULT_VENDOR_IN_ENDPOINT,
+) -> tuple[usb.core.Device, int]:
+    device = find_usb_device(vid, pid)
 
-    for interface in configuration:
-        for endpoint in interface:
-            if endpoint.bEndpointAddress == endpoint_address:
-                return interface
-
-    raise RuntimeError(f"Endpoint 0x{endpoint_address:02x} not found on the active USB configuration")
-
-
-def _prepare_device(device: usb.core.Device, endpoint_address: int) -> usb.core.Interface:
     try:
         device.set_configuration()
     except usb.core.USBError as exc:
@@ -111,7 +97,19 @@ def _prepare_device(device: usb.core.Device, endpoint_address: int) -> usb.core.
             if "busy" not in error_text and "access" not in error_text:
                 raise
 
-    interface = _find_vendor_interface(device, endpoint_address)
+    configuration = device.get_active_configuration()
+    interface = None
+    for candidate_interface in configuration:
+        for endpoint in candidate_interface:
+            if endpoint.bEndpointAddress == endpoint_address:
+                interface = candidate_interface
+                break
+        if interface is not None:
+            break
+
+    if interface is None:
+        raise RuntimeError(f"Endpoint 0x{endpoint_address:02x} not found on the active USB configuration")
+
     interface_number = int(interface.bInterfaceNumber)
     alternate_setting = int(interface.bAlternateSetting)
 
@@ -124,10 +122,10 @@ def _prepare_device(device: usb.core.Device, endpoint_address: int) -> usb.core.
 
     usb.util.claim_interface(device, interface_number)
     device.set_interface_altsetting(interface=interface_number, alternate_setting=alternate_setting)
-    return interface_number
+    return device, interface_number
 
 
-def _release_device(device: usb.core.Device, interface_number: int | None) -> None:
+def close_trace_device(device: usb.core.Device, interface_number: int | None) -> None:
     try:
         if interface_number is not None:
             usb.util.release_interface(device, interface_number)
@@ -136,34 +134,37 @@ def _release_device(device: usb.core.Device, interface_number: int | None) -> No
         pass
 
 
-def capture_bulk_stream(
+def iter_trace_packets(
     duration_seconds: float = DEFAULT_DURATION_SECONDS,
     vid: int = DEFAULT_VID,
     pid: int = DEFAULT_PID,
     endpoint_address: int = DEFAULT_VENDOR_IN_ENDPOINT,
     read_size: int = DEFAULT_READ_SIZE,
     timeout_ms: int = DEFAULT_TIMEOUT_MS,
-) -> CaptureStats:
+    channel_registry: TraceChannelRegistry | None = None,
+    keep_running: Callable[[], bool] | None = None,
+    on_opened: Callable[[], None] | None = None,
+):
     if duration_seconds <= 0.0:
         raise ValueError("duration_seconds must be positive")
 
     if read_size <= 0:
         raise ValueError("read_size must be positive")
 
-    device = _find_device(vid, pid)
-    interface_number = _prepare_device(device, endpoint_address)
+    device, interface_number = open_trace_device(vid=vid, pid=pid, endpoint_address=endpoint_address)
     backend = device._ctx.backend
     handle = device._ctx.handle
     read_buffer = array.array("B", [0]) * read_size
-
-    total_bytes = 0
-    start = time.perf_counter()
-    deadline = start + duration_seconds
+    decoder = TraceStreamDecoder()
+    deadline = time.perf_counter() + duration_seconds
+    if on_opened is not None:
+        on_opened()
 
     try:
         while True:
-            now = time.perf_counter()
-            if now >= deadline:
+            if keep_running is not None and not keep_running():
+                break
+            if time.perf_counter() >= deadline:
                 break
 
             try:
@@ -171,46 +172,39 @@ def capture_bulk_stream(
             except usb.core.USBTimeoutError:
                 continue
 
-            total_bytes += transferred
+            if transferred <= 0:
+                continue
+
+            chunk = memoryview(read_buffer)[:transferred]
+            for packet in decoder.append(chunk):
+                if channel_registry is not None and not channel_registry.matches_packet(packet):
+                    continue
+                yield packet
     finally:
-        elapsed = time.perf_counter() - start
-        _release_device(device, interface_number)
-
-    return CaptureStats(total_bytes=total_bytes, elapsed_seconds=elapsed)
+        close_trace_device(device, interface_number)
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Capture PicoTrace vendor bulk data and report total bytes plus average speed.")
-    parser.add_argument("--duration", type=float, default=DEFAULT_DURATION_SECONDS, help="Capture duration in seconds")
-    parser.add_argument("--vid", type=lambda value: int(value, 0), default=DEFAULT_VID, help="USB vendor ID, for example 0xCAFE")
-    parser.add_argument("--pid", type=lambda value: int(value, 0), default=DEFAULT_PID, help="USB product ID, for example 0x4003")
-    parser.add_argument("--endpoint", type=lambda value: int(value, 0), default=DEFAULT_VENDOR_IN_ENDPOINT, help="Bulk IN endpoint address")
-    parser.add_argument("--read-size", type=int, default=DEFAULT_READ_SIZE, help="Bytes to request per bulk read")
-    parser.add_argument("--timeout-ms", type=int, default=DEFAULT_TIMEOUT_MS, help="Per-read timeout in milliseconds")
-    return parser
-
-
-def main() -> int:
-    parser = _build_parser()
-    args = parser.parse_args()
-
-    try:
-        stats = capture_bulk_stream(
-            duration_seconds=args.duration,
-            vid=args.vid,
-            pid=args.pid,
-            endpoint_address=args.endpoint,
-            read_size=args.read_size,
-            timeout_ms=args.timeout_ms,
+def read_trace_packets(
+    duration_seconds: float = DEFAULT_DURATION_SECONDS,
+    vid: int = DEFAULT_VID,
+    pid: int = DEFAULT_PID,
+    endpoint_address: int = DEFAULT_VENDOR_IN_ENDPOINT,
+    read_size: int = DEFAULT_READ_SIZE,
+    timeout_ms: int = DEFAULT_TIMEOUT_MS,
+    channel_registry: TraceChannelRegistry | None = None,
+    keep_running: Callable[[], bool] | None = None,
+    on_opened: Callable[[], None] | None = None,
+) -> list[TracePacket]:
+    return list(
+        iter_trace_packets(
+            duration_seconds=duration_seconds,
+            vid=vid,
+            pid=pid,
+            endpoint_address=endpoint_address,
+            read_size=read_size,
+            timeout_ms=timeout_ms,
+            channel_registry=channel_registry,
+            keep_running=keep_running,
+            on_opened=on_opened,
         )
-    except (RuntimeError, ValueError, usb.core.USBError) as exc:
-        print(f"capture failed: {exc}", file=sys.stderr)
-        return 1
-
-    print(f"total bytes read: {stats.total_bytes}")
-    print(f"average speed: {stats.bytes_per_second:.2f} B/s")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    )

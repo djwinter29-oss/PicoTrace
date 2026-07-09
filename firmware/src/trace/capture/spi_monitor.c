@@ -45,7 +45,7 @@ typedef char spi_monitor_pio_programs_must_fit[
 #define SPI_MONITOR_DMA_ALIGN(bytes) __attribute__((aligned(bytes)))
 #endif
 
-/** @brief Packet-builder state for one logical SPI channel session. */
+/** @brief Packet-builder state for the active bus-owned SPI transaction. */
 typedef struct {
     bool packet_open; /**< Indicates whether a fixed trace packet fragment is currently open. */
     bool transaction_fragmented; /**< Indicates whether the current transaction already emitted an earlier fragment. */
@@ -54,7 +54,7 @@ typedef struct {
     trace_packet_t packet; /**< Caller-owned fixed packet fragment under construction. */
 } spi_monitor_packet_builder_t;
 
-/** @brief Runtime state owned by one logical SPI channel in the current scaffold. */
+/** @brief Per-logical-channel accounting state retained across bus-owned transactions. */
 typedef struct {
     uint32_t packets_emitted; /**< Number of emitted trace packet fragments in the current session. */
     uint32_t sink_overrun_count; /**< Number of fragments dropped because the shared trace ring rejected them. */
