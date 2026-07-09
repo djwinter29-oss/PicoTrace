@@ -163,8 +163,15 @@ For SPI, the current architecture now also includes:
 
 - clocked sampling
 - transaction attribution by observed `CS_N`
+- one DMA-backed raw sampler per observed SPI bus with software MOSI/MISO extraction
 - packet assembly
 - handoff into the shared trace ring
+
+The current SPI transaction attribution still samples `CS_N` ownership at DMA half-buffer handoff
+rather than on every raw SPI bit. That is an intentional simplification for the common case where
+controllers leave a visible idle gap around `CS_N` transitions. If future hardware needs exact
+ownership across back-to-back `CS_N` changes without a usable gap, the upgrade path is to carry
+`CS_N` history in the raw capture stream and decode those transitions in software.
 
 Both protocols now feed the same shared packet and USB streaming model.
 

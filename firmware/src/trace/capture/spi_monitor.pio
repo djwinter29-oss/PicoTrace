@@ -1,9 +1,9 @@
 ; @file spi_monitor.pio
 ; @brief Passive SPI edge sampler scaffold for one observed SPI bus.
 ;
-; The program samples the contiguous SCLK, MOSI, and MISO input group. The current scaffold keeps
-; all three bits so later software can route bytes by CS selection and decide whether to ignore the
-; MISO bit for MOSI-only sessions.
+; The program waits on the observed SCLK edge but only shifts the contiguous MOSI/MISO data pair.
+; That keeps one raw word aligned to one SPI byte per direction without wasting DMA bandwidth on
+; sampled clock bits that the decode path never reads.
 
 .program spi_monitor_mode0_sampler
 
@@ -11,7 +11,7 @@
     wait 0 pin 0
 bitloop0:
     wait 1 pin 0
-    in pins, 3
+    in pins, 2
     wait 0 pin 0
 .wrap
 
@@ -22,7 +22,7 @@ bitloop0:
 bitloop1:
     wait 1 pin 0
     wait 0 pin 0
-    in pins, 3
+    in pins, 2
 .wrap
 
 .program spi_monitor_mode2_sampler
@@ -31,7 +31,7 @@ bitloop1:
     wait 1 pin 0
 bitloop2:
     wait 0 pin 0
-    in pins, 3
+    in pins, 2
     wait 1 pin 0
 .wrap
 
@@ -42,7 +42,7 @@ bitloop2:
 bitloop3:
     wait 0 pin 0
     wait 1 pin 0
-    in pins, 3
+    in pins, 2
 .wrap
 
 % c-sdk {
@@ -54,9 +54,9 @@ static inline void spi_monitor_sampler_program_init_common(
     float clkdiv,
     pio_sm_config *config
 ) {
-    sm_config_set_in_pins(config, pin_base);
+    sm_config_set_in_pins(config, pin_base + 1u);
     sm_config_set_clkdiv(config, clkdiv);
-    sm_config_set_in_shift(config, false, true, 24u);
+    sm_config_set_in_shift(config, false, true, 16u);
 
     pio_gpio_init(pio, pin_base);
     pio_gpio_init(pio, pin_base + 1u);

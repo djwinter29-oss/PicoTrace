@@ -27,6 +27,8 @@ typedef struct {
     uint32_t transfer_count;
 } dma_channel_hw_t;
 
+extern bool stub_dma_configure_fail_next;
+
 static dma_channel_hw_t g_stub_dma_channels[16];
 static bool g_stub_dma_claimed[16];
 
@@ -83,6 +85,15 @@ static inline void dma_channel_configure(uint channel,
                                          bool trigger) {
     (void)config;
     (void)trigger;
+
+    if (stub_dma_configure_fail_next) {
+        stub_dma_configure_fail_next = false;
+        g_stub_dma_channels[channel].write_addr = 0u;
+        g_stub_dma_channels[channel].read_addr = 0u;
+        g_stub_dma_channels[channel].transfer_count = 0u;
+        return;
+    }
+
     g_stub_dma_channels[channel].write_addr = (uintptr_t)write_addr;
     g_stub_dma_channels[channel].read_addr = (uintptr_t)read_addr;
     g_stub_dma_channels[channel].transfer_count = transfer_count;

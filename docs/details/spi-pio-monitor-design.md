@@ -45,7 +45,7 @@ Each start request must also select one of the four standard SPI modes:
 - mode 2
 - mode 3
 
-Changing monitoring mode, lane selection, or SPI mode should use the same destructive stop-first
+Changing monitoring mode, capture direction, or SPI mode should use the same destructive stop-first
 restart policy already used by the I2C monitor. Any in-flight raw samples, partial packet state,
 or pending transaction bytes for that running session may be discarded at reconfiguration time.
 
@@ -100,6 +100,14 @@ Reason:
 The future implementation should therefore maintain per-bus capture state and per-logical-channel
 trace packet state.
 
+The current implementation now follows that ownership model directly:
+
+- one DMA-backed raw sampler runs per observed SPI bus
+- that raw bus stream carries only sampled `MOSI` and `MISO` bit pairs while `SCLK` only gates capture
+- software extracts MOSI and optional MISO bytes directly from each completed raw bus word
+- one live packet builder is owned by the active bus transaction rather than by every logical
+  channel all the time
+
 ## Transaction Boundary Rules
 
 The active `CS_N` line determines which logical channel a sampled SPI byte belongs to.
@@ -111,6 +119,8 @@ The transaction should end when either of these conditions occurs:
 - an inter-byte timeout expires while a transaction is open
 
 For this design, a `CS_N` change or timeout is treated as the end of the current logical packet.
+When the handoff view of `CS_N` is idle, the current logical transaction is considered finished and
+the monitor should close and emit the accumulated packet fragment sequence for that transaction.
 
 If more than one observed `CS_N` is active at once, that should be treated as an error boundary and
 the current packet should be closed before capture resumes from the next clean selection state.
@@ -130,6 +140,11 @@ The present implementation samples bus data continuously but attributes `CS_N` o
 half-buffer handoff rather than on every sampled SPI bit. In the common case above, that is an
 acceptable simplification because the next transaction normally starts after the `CS_N` boundary,
 so the handoff view still matches the logical transaction split seen by the controller.
+
+In other words, an idle `CS_N` sample at handoff is the current end-of-transaction signal for the
+open session on that bus. The monitor should attribute the just-completed handoff buffer to the
+currently open logical transaction, then flush the accumulated packet content for that transaction
+rather than waiting for any stronger delimiter.
 
 ## Current Design Limitation
 
@@ -153,17 +168,27 @@ handoff.
 
 ## Packet Assembly Rules
 
-Each logical SPI channel should own a persistent open `trace_packet_t` assembly buffer for the
-current transaction.
+The active transaction on one observed SPI bus should own the live `trace_packet_t` assembly buffer
+for the current transaction.
 
 When sampled bytes are attributed to a logical channel:
 
-- append the received SPI data to that channel's open packet
+- append the received SPI data to the active transaction packet currently attributed to that logical channel
 - keep the packet open while the same transaction continues
-- push the packet when the transaction ends
+- when the current transaction ends, emit the accumulated packet fragment sequence into the shared `trace_ring`
+- treat `CS_N` observed idle at handoff as one of those end-of-transaction signals
 
-If the open packet reaches `TRACE_PACKET_PAYLOAD_BYTES`, the implementation should immediately
-dispatch that fragment into the trace ring and continue the same transaction in a new fragment.
+When the current SPI monitor session on that bus is closed normally, such as an explicit stop or a
+stop-first reconfiguration while a transaction is open, the monitor should also close and emit the
+accumulated fragment sequence for that open transaction before resetting the bus-owned runtime.
+
+If appending more received bytes would grow the current fragment past `TRACE_PACKET_PAYLOAD_BYTES`,
+the implementation should immediately emit the current fragment into the shared `trace_ring` and
+continue the same transaction in a new fragment.
+
+In other words, `TRACE_PACKET_PAYLOAD_BYTES` is the fixed payload budget for one emitted
+`trace_packet_t`. A transaction larger than that budget must be fragmented across multiple emitted
+packets instead of waiting for the whole transaction to fit in one buffer.
 
 That matches the current fixed-packet ring model and avoids requiring a larger transient SPI
 transaction buffer.
@@ -180,14 +205,13 @@ The packet header fields currently mean:
   - `TRACE_FLAG_END` closes a logical transaction
   - `TRACE_FLAG_CONTINUED` marks a fragment that continues an earlier transaction
   - `TRACE_FLAG_OVERFLOW` marks a fragment that follows dropped output
-  - `TRACE_FLAG_TRUNCATED` marks a transaction that ended with a partial byte in progress
   - `TRACE_FLAG_ERROR` marks an error boundary such as conflicting active `CS_N` selection
 - `payload_len =` the number of valid payload bytes in the fragment
-- `meta =` the configured capture mode for that session:
+- `meta =` the configured capture mode for that fragment:
   - `SPI_MONITOR_CAPTURE_MOSI` for MOSI-only capture
-  - `SPI_MONITOR_CAPTURE_MOSI_MISO` for dual-lane capture
+  - `SPI_MONITOR_CAPTURE_MOSI_MISO` for MOSI+MISO capture
 - `sequence =` the per-logical-channel fragment counter for the current monitor session
-- `timestamp_us =` the producer timestamp recorded when the fragment is opened
+- `timestamp_us =` the timestamp recorded when the current logical transaction opened
 
 The payload format is currently:
 
@@ -198,13 +222,23 @@ The payload format is currently:
   - payload byte `2` = MOSI byte `1`
   - payload byte `3` = MISO byte `1`
 
-This is the current implemented contract. Host-side decode should treat `meta` as the lane-mode
+This is the current implemented contract. Host-side decode should treat `meta` as the capture-mode
 selector that tells it whether payload bytes are MOSI-only or MOSI/MISO interleaved pairs.
 
-That interleaved dual-lane layout is a delivery format, not a timing guarantee. PicoTrace's
+When a transaction ends, the final fragment for that transaction is emitted to the shared `trace_ring`
+with `TRACE_FLAG_END` set. When a transaction is larger than one fixed packet payload, earlier
+fragments are emitted as soon as the payload would exceed `TRACE_PACKET_PAYLOAD_BYTES`, and later
+fragments continue the same transaction with `TRACE_FLAG_CONTINUED`.
+
+That means there are two normal emission triggers in the current design:
+
+- transaction end, including `CS_N` observed idle at handoff or timeout expiry
+- fragment size reaching the fixed `TRACE_PACKET_PAYLOAD_BYTES` limit
+
+That interleaved MOSI+MISO layout is a delivery format, not a timing guarantee. PicoTrace's
 current SPI monitor is content-first: in `SPI_MONITOR_CAPTURE_MOSI_MISO` mode it aims to deliver
 both MOSI and MISO content for the same `CS_N`-owned logical transaction, but it does not promise
-that the two physical lanes were buffer-synchronized or phase-aligned at every byte boundary.
+that the two physical signal directions were buffer-synchronized or phase-aligned at every byte boundary.
 Host software should therefore treat the payload as two delivered directional streams encoded into
 one packet format, not as proof of cycle-accurate MOSI/MISO lockstep.
 
@@ -216,22 +250,22 @@ change arrives soon enough.
 The exact timeout value does not need to be fixed yet, but the implementation should treat it as a
 capture boundary equivalent to end-of-transaction for packetization purposes.
 
-## Lane Selection Semantics
+## Capture Direction Semantics
 
 This design fixes the monitor start modes and the current emitted packet format:
 
 - MOSI-only monitoring must capture controller-to-peripheral data
 - MOSI+MISO monitoring must capture both directions for the same transaction
 
-The feature goal for MOSI+MISO mode is delivery completeness, not lane synchronization. The
+The feature goal for MOSI+MISO mode is delivery completeness, not cross-direction synchronization. The
 monitor intentionally does not require MOSI and MISO DMA half-buffers to retire in lockstep before
 forwarding decoded content to the user. That keeps the producer path simple and aligned with the
 current PicoTrace target: low-cost passive capture where getting both directions to the host is
-more important than proving exact cross-lane timing alignment.
+more important than proving exact cross-direction timing alignment.
 
 The current implementation represents MOSI+MISO data as interleaved byte pairs in the payload and
 uses `trace_packet_header_t.meta` to carry the active capture mode so the host can distinguish the
-layout. Consumers that need exact per-byte pairing or stronger cross-lane timing guarantees should
+layout. Consumers that need exact per-byte pairing or stronger cross-direction timing guarantees should
 treat that as out of scope for the current design.
 
 ## Sequence And Timestamp Intent
@@ -242,7 +276,8 @@ path does now:
 - `type` identifies SPI
 - `channel` identifies the logical SPI channel selected by `CS_N`
 - `sequence` increments per logical channel session
-- `timestamp_us` records when the fragment is opened
+- `timestamp_us` records when the logical transaction opened, and all fragments from that same
+  transaction keep that same start timestamp
 
 If SPI monitoring is stopped and restarted for a channel, that should be treated as a new session.
 

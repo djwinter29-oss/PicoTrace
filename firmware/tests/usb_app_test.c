@@ -13,6 +13,7 @@
 #include "trace/capture/i2c_monitor_control.h"
 #include "trace/capture/spi_monitor.h"
 #include "trace/capture/spi_monitor_control.h"
+#include "spi_monitor_test_hooks.h"
 #include "trace/decode/i2c_decoder_test.h"
 #include "trace/decode/i2c_trace_packet_test.h"
 #include "trace/trace_ring.h"
@@ -59,6 +60,7 @@ static uint32_t stub_spi_packets_emitted[6];
 static uint32_t stub_spi_overrun_count[6];
 static bool stub_spi_running[6];
 static spi_monitor_rc_t stub_spi_monitor_result = SPI_MONITOR_RC_OK;
+bool stub_dma_configure_fail_next;
 
 static trace_packet_t make_test_trace_packet(uint8_t sequence_seed);
 
@@ -338,6 +340,7 @@ void reset_usb_stub(void) {
     memset(stub_spi_overrun_count, 0, sizeof(stub_spi_overrun_count));
     memset(stub_spi_running, 0, sizeof(stub_spi_running));
     stub_spi_monitor_result = SPI_MONITOR_RC_OK;
+    stub_dma_configure_fail_next = false;
     memset(stub_vendor_tx_data, 0, sizeof(stub_vendor_tx_data));
     app_control_init();
     i2c_monitor_control_init();
@@ -392,6 +395,7 @@ static void reset_real_spi_monitor_state(void) {
     spi_monitor_bus_config_t config = {0};
 
     stub_time_us32 = 0u;
+    stub_dma_configure_fail_next = false;
     app_control_set_stream_enabled(true);
     (void)spi_monitor_init();
     config.capture = SPI_MONITOR_CAPTURE_DISABLED;
@@ -404,7 +408,7 @@ static uint32_t pack_spi_sample_word(const uint8_t *samples, uint32_t sample_cou
     uint32_t word = 0u;
 
     for (uint32_t sample = 0u; sample < sample_count; ++sample) {
-        word |= ((uint32_t)(samples[sample] & 0x07u)) << (21u - (sample * 3u));
+        word |= ((uint32_t)(samples[sample] & 0x03u)) << (14u - (sample * 2u));
     }
 
     return word;
@@ -417,7 +421,7 @@ static uint32_t pack_spi_byte_word(uint8_t mosi_byte, uint8_t miso_byte) {
         uint8_t mosi = (uint8_t)((mosi_byte >> (7u - bit)) & 0x01u);
         uint8_t miso = (uint8_t)((miso_byte >> (7u - bit)) & 0x01u);
 
-        samples[bit] = (uint8_t)((mosi << 1u) | (miso << 2u));
+        samples[bit] = (uint8_t)(mosi | (miso << 1u));
     }
 
     return pack_spi_sample_word(samples, 8u);
@@ -567,11 +571,11 @@ static void test_spi_monitor_emits_mosi_miso_trace_packet(void) {
     config.spi_mode = 0u;
     config.channel_select_mask = 0x02u;
     config.timeout_us = 1000u;
-    mosi_words[0] = pack_spi_lane_word(0xA5u, 1u);
-    miso_words[0] = pack_spi_lane_word(0x3Cu, 2u);
+    mosi_words[0] = pack_spi_lane_word(0xA5u, 0u);
+    miso_words[0] = pack_spi_lane_word(0x3Cu, 1u);
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
-    assert(spi_monitor_test_feed_dual_lane_samples(0u, 0x02u, 100u, mosi_words, miso_words, 1u) == true);
+    assert(spi_monitor_test_feed_mosi_miso_samples(0u, 0x02u, 100u, mosi_words, miso_words, 1u) == true);
     assert(trace_ring_available() == 0u);
 
     spi_monitor_test_poll_timeout(0u, 1200u);
@@ -653,6 +657,60 @@ static void test_spi_monitor_set_bus_config_reports_disabled_when_stream_off(voi
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_DISABLED);
 }
 
+/** @brief Verify that disabling a bus ignores stale SPI mode and channel-selection fields. */
+static void test_spi_monitor_disable_ignores_mode_and_channel_validation(void) {
+    spi_monitor_bus_config_t start = {0};
+    spi_monitor_bus_config_t stop = {0};
+    spi_monitor_bus_status_t bus_status;
+    spi_monitor_channel_status_t status[SPI_MONITOR_CHANNEL_COUNT];
+
+    reset_real_spi_monitor_state();
+    start.capture = SPI_MONITOR_CAPTURE_MOSI;
+    start.spi_mode = 0u;
+    start.channel_select_mask = 0x03u;
+    start.timeout_us = 1000u;
+    stop.capture = SPI_MONITOR_CAPTURE_DISABLED;
+    stop.spi_mode = 9u;
+    stop.channel_select_mask = 0u;
+
+    assert(spi_monitor_set_bus_config(0u, &start) == SPI_MONITOR_RC_OK);
+    assert(spi_monitor_set_bus_config(0u, &stop) == SPI_MONITOR_RC_OK);
+    assert(spi_monitor_get_bus_status(0u, &bus_status) == SPI_MONITOR_RC_OK);
+    assert(spi_monitor_get_all_status(status) == SPI_MONITOR_RC_OK);
+    assert(bus_status.running == false);
+    assert(status[0].running == false);
+    assert(status[1].running == false);
+}
+
+/** @brief Verify that SPI reconfigure failure leaves the bus stopped, matching I2C stop-first recovery. */
+static void test_spi_monitor_reconfig_failure_leaves_bus_stopped(void) {
+    spi_monitor_bus_config_t start = {0};
+    spi_monitor_bus_config_t reconfig = {0};
+    spi_monitor_bus_status_t bus_status;
+    spi_monitor_channel_status_t status[SPI_MONITOR_CHANNEL_COUNT];
+
+    reset_real_spi_monitor_state();
+    start.capture = SPI_MONITOR_CAPTURE_MOSI;
+    start.spi_mode = 0u;
+    start.channel_select_mask = 0x01u;
+    start.timeout_us = 1000u;
+    reconfig.capture = SPI_MONITOR_CAPTURE_MOSI_MISO;
+    reconfig.spi_mode = 1u;
+    reconfig.channel_select_mask = 0x03u;
+    reconfig.timeout_us = 900u;
+
+    assert(spi_monitor_set_bus_config(0u, &start) == SPI_MONITOR_RC_OK);
+    stub_dma_configure_fail_next = true;
+    assert(spi_monitor_set_bus_config(0u, &reconfig) == SPI_MONITOR_RC_FAILED);
+    assert(spi_monitor_get_bus_status(0u, &bus_status) == SPI_MONITOR_RC_OK);
+    assert(spi_monitor_get_all_status(status) == SPI_MONITOR_RC_OK);
+    assert(bus_status.running == false);
+    assert(bus_status.capture == SPI_MONITOR_CAPTURE_DISABLED);
+    assert(status[0].running == false);
+    assert(status[1].running == false);
+    assert(status[2].running == false);
+}
+
 static void test_spi_monitor_invalid_reconfig_does_not_flush_transaction(void) {
     spi_monitor_bus_config_t start = {0};
     spi_monitor_bus_config_t invalid = {0};
@@ -710,8 +768,35 @@ static void test_spi_monitor_open_transaction_does_not_count_packet_before_ring_
     assert(status[0].packets_emitted == 1u);
 }
 
-/** @brief Verify that bus and channel SPI status sum MOSI and MISO lane overruns. */
-static void test_spi_monitor_dual_lane_overruns_are_aggregated_in_status(void) {
+/** @brief Verify that an idle CS handoff flushes buffered data instead of dropping the completed half-buffer. */
+static void test_spi_monitor_idle_cs_handoff_flushes_completed_buffer(void) {
+    spi_monitor_bus_config_t config = {0};
+    trace_packet_t packet = {0};
+    uint32_t raw_words[1];
+
+    reset_real_spi_monitor_state();
+    trace_ring_init();
+    config.capture = SPI_MONITOR_CAPTURE_MOSI;
+    config.spi_mode = 0u;
+    config.channel_select_mask = 0x01u;
+    config.timeout_us = 1000u;
+    raw_words[0] = pack_spi_byte_word(0x12u, 0x00u);
+
+    assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
+    assert(spi_monitor_test_feed_samples(0u, 0x01u, 100u, raw_words, 1u) == true);
+    raw_words[0] = pack_spi_byte_word(0x34u, 0x00u);
+    assert(spi_monitor_test_feed_samples(0u, 0x00u, 200u, raw_words, 1u) == true);
+
+    assert(trace_ring_available() == 1u);
+    assert(trace_ring_pop_copy(&packet) == true);
+    assert((packet.header.flags & TRACE_FLAG_END) != 0u);
+    assert(packet.header.payload_len == 2u);
+    assert(packet.payload[0] == 0x12u);
+    assert(packet.payload[1] == 0x34u);
+}
+
+/** @brief Verify that sampler overruns are reported at bus scope, not duplicated onto channels. */
+static void test_spi_monitor_directional_overruns_are_aggregated_in_status(void) {
     spi_monitor_bus_config_t config = {0};
     spi_monitor_bus_status_t bus_status;
     spi_monitor_channel_status_t status[SPI_MONITOR_CHANNEL_COUNT];
@@ -723,12 +808,12 @@ static void test_spi_monitor_dual_lane_overruns_are_aggregated_in_status(void) {
     config.timeout_us = 1000u;
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
-    spi_monitor_test_set_lane_overrun_counts(0u, 2u, 3u);
+    spi_monitor_test_set_bus_sampler_overrun_counts(0u, 2u, 3u);
 
     assert(spi_monitor_get_bus_status(0u, &bus_status) == SPI_MONITOR_RC_OK);
     assert(spi_monitor_get_all_status(status) == SPI_MONITOR_RC_OK);
     assert(bus_status.overrun_count == 5u);
-    assert(status[1].overrun_count == 5u);
+    assert(status[1].overrun_count == 0u);
 }
 
 /** @brief Verify that timeout-driven runtime flushes refresh per-channel overrun status immediately. */
@@ -1668,9 +1753,12 @@ int main(void) {
     test_spi_monitor_emits_mosi_only_trace_packet();
     test_spi_monitor_stream_disable_blocks_ring_output();
     test_spi_monitor_set_bus_config_reports_disabled_when_stream_off();
+    test_spi_monitor_disable_ignores_mode_and_channel_validation();
+    test_spi_monitor_reconfig_failure_leaves_bus_stopped();
     test_spi_monitor_invalid_reconfig_does_not_flush_transaction();
     test_spi_monitor_open_transaction_does_not_count_packet_before_ring_push();
-    test_spi_monitor_dual_lane_overruns_are_aggregated_in_status();
+    test_spi_monitor_idle_cs_handoff_flushes_completed_buffer();
+    test_spi_monitor_directional_overruns_are_aggregated_in_status();
     test_spi_monitor_poll_timeout_refreshes_channel_overrun_status();
     test_spi_monitor_overflow_preserves_continued_for_same_transaction();
     test_cli_unknown_command_writes_fixed_helper();

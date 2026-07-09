@@ -35,7 +35,7 @@ typedef struct {
     uint8_t channel; /**< Logical capture channel id assigned by the board mapping. */
     uint8_t flags; /**< Bitwise OR of @ref trace_packet_flags_t values. */
     uint16_t payload_len; /**< Number of valid bytes stored in @ref trace_packet_t.payload. */
-    uint16_t meta; /**< Protocol-specific auxiliary value such as event count or lane metadata. */
+    uint16_t meta; /**< Protocol-specific auxiliary value such as event count or capture-mode metadata. */
     uint32_t sequence; /**< Monotonic per-session fragment sequence assigned by the producer. */
     uint32_t timestamp_us; /**< Producer-supplied microsecond timestamp for fragment start time. */
 } trace_packet_header_t;

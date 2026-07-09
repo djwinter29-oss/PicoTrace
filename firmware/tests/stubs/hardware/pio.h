@@ -13,7 +13,7 @@ typedef struct {
 typedef pio_hw_t *PIO;
 
 typedef struct {
-    uint16_t instructions[1];
+    const uint16_t *instructions;
     uint8_t length;
     int8_t origin;
 } pio_program_t;
@@ -45,6 +45,12 @@ static inline uint pio_get_dreq(PIO pio, uint sm, bool is_tx) {
     (void)pio;
     (void)is_tx;
     return sm;
+}
+
+static inline uint16_t pio_encode_wait_gpio(bool polarity, uint gpio) {
+    (void)polarity;
+    (void)gpio;
+    return 0u;
 }
 
 #endif
