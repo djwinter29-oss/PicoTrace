@@ -6,6 +6,9 @@
 
 typedef unsigned int uint;
 
+#define GPIO_IN false
+#define GPIO_OUT true
+
 static inline void gpio_init(uint gpio) {
     (void)gpio;
 }

@@ -27,10 +27,17 @@ typedef struct {
     uint32_t transfer_count;
 } dma_channel_hw_t;
 
+typedef struct {
+    volatile uint32_t ints0;
+} dma_hw_t;
+
 extern bool stub_dma_configure_fail_next;
 
 static dma_channel_hw_t g_stub_dma_channels[16];
 static bool g_stub_dma_claimed[16];
+static dma_hw_t g_stub_dma_hw;
+
+#define dma_hw (&g_stub_dma_hw)
 
 static inline int dma_claim_unused_channel(bool required) {
     (void)required;
@@ -101,6 +108,21 @@ static inline void dma_channel_configure(uint channel,
 
 static inline void dma_channel_abort(uint channel) {
     (void)channel;
+}
+
+static inline void dma_channel_set_write_addr(uint channel, volatile void *write_addr, bool trigger) {
+    (void)trigger;
+    g_stub_dma_channels[channel].write_addr = (uintptr_t)write_addr;
+}
+
+static inline void dma_channel_set_trans_count(uint channel, uint32_t transfer_count, bool trigger) {
+    (void)trigger;
+    g_stub_dma_channels[channel].transfer_count = transfer_count;
+}
+
+static inline void dma_channel_set_irq0_enabled(uint channel, bool enabled) {
+    (void)channel;
+    (void)enabled;
 }
 
 static inline bool dma_channel_is_busy(uint channel) {

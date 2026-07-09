@@ -18,17 +18,25 @@
 #define I2C_MONITOR_DEFAULT_SAMPLE_HZ 8000000u
 
 /** @brief SDA GPIO for logical I2C monitor channel `0`. */
+#define I2C_MONITOR_CH0_LOGICAL_CHANNEL 0x00u
+/** @brief SDA GPIO for logical I2C monitor channel `0`. */
 #define I2C_MONITOR_CHANNEL0_SDA_GPIO 16u
 /** @brief SCL GPIO for logical I2C monitor channel `0`. */
 #define I2C_MONITOR_CHANNEL0_SCL_GPIO 17u
+/** @brief SDA GPIO for logical I2C monitor channel `1`. */
+#define I2C_MONITOR_CH1_LOGICAL_CHANNEL 0x01u
 /** @brief SDA GPIO for logical I2C monitor channel `1`. */
 #define I2C_MONITOR_CHANNEL1_SDA_GPIO 18u
 /** @brief SCL GPIO for logical I2C monitor channel `1`. */
 #define I2C_MONITOR_CHANNEL1_SCL_GPIO 19u
 /** @brief SDA GPIO for logical I2C monitor channel `2`. */
+#define I2C_MONITOR_CH2_LOGICAL_CHANNEL 0x02u
+/** @brief SDA GPIO for logical I2C monitor channel `2`. */
 #define I2C_MONITOR_CHANNEL2_SDA_GPIO 20u
 /** @brief SCL GPIO for logical I2C monitor channel `2`. */
 #define I2C_MONITOR_CHANNEL2_SCL_GPIO 21u
+/** @brief SDA GPIO for logical I2C monitor channel `3`. */
+#define I2C_MONITOR_CH3_LOGICAL_CHANNEL 0x03u
 /** @brief SDA GPIO for logical I2C monitor channel `3`. */
 #define I2C_MONITOR_CHANNEL3_SDA_GPIO 26u
 /** @brief SCL GPIO for logical I2C monitor channel `3`. */

@@ -31,7 +31,24 @@ add_executable(usb_app_test
     ../src/usb/usb_hid.c
 )
 
+add_executable(i2c_monitor_runtime_test
+    ../src/app_control.c
+    i2c_monitor_runtime_test.c
+    i2c_monitor_test_bridge.c
+    ../src/trace/decode/i2c_decoder.c
+    ../src/trace/decode/i2c_trace_packet.c
+    ../src/trace/trace_ring.c
+)
+
 target_include_directories(usb_app_test
+    PRIVATE
+        .
+    stubs
+        ../src
+        ../src/config
+)
+
+target_include_directories(i2c_monitor_runtime_test
     PRIVATE
         .
     stubs
@@ -49,3 +66,4 @@ if (BRIDGE_ENABLE_COVERAGE)
 endif ()
 
 add_test(NAME usb_app_test COMMAND usb_app_test)
+add_test(NAME i2c_monitor_runtime_test COMMAND i2c_monitor_runtime_test)

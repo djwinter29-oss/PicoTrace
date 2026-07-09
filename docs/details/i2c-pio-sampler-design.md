@@ -145,16 +145,21 @@ For each completed buffer the IRQ path:
 - acknowledges the DMA completion
 - identifies the just-finished ping-pong slot
 - immediately re-arms DMA on the alternate slot
-- copies the completed raw sample block into a per-channel staging buffer
+- marks the completed ping-pong slot as software-owned and ready for decode
 
 Then the producer-core poll path:
 
 - stops any active channel whenever streaming is disabled
-- passes one staged raw sample block at a time to the decoder
+- passes one completed ping-pong slot at a time to the decoder
 - appends decoded I2C items into a persistent per-channel trace packet buffer
 
 This keeps DMA completion capture-first while moving decode and packet assembly out of the hard IRQ
 path. Packet assembly is still no longer forced to flush at DMA buffer boundaries.
+
+The current implementation does not keep a third staging copy. A completed DMA slot remains
+software-owned until decode finishes, and DMA is only re-armed onto the alternate slot if that slot
+is no longer software-owned. If the alternate slot is still owned by software when a completion
+arrives, the channel takes the existing stop-first overflow recovery path.
 
 ## Current Buffer Handoff Contract
 
