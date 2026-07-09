@@ -446,7 +446,10 @@ def _start_monitor(
         stop=stop,
         stop_config=stop_config,
     )
-    print(f"started monitor window for channel {channel} ({label})")
+    if channel == _ALL_TRACE_CHANNEL:
+        print(f"started monitor window for all trace traffic ({label})")
+    else:
+        print(f"started monitor window for channel {channel} ({label})")
     return 0
 
 

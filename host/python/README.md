@@ -78,13 +78,17 @@ Windows:
 .\tools\windows\host_python_venv.ps1
 ```
 
+If `python` is not on `PATH`, the PowerShell script falls back to the Windows `py -3` launcher. You can also pass an explicit interpreter with `-Python C:\Path\To\python.exe`.
+
 Linux:
 
 ```bash
 ./tools/linux/host_python_venv.sh
 ```
 
-Both scripts create `.venv/`, upgrade `pip`, and install `requirements.txt`.
+If Python 3 is not available as `python3`, set `PYTHON_BIN` first, for example `PYTHON_BIN=/usr/bin/python3.11 ./tools/linux/host_python_venv.sh`.
+
+Both scripts create the host Python virtual environment at the repository root as `.venv/`, upgrade `pip`, and install `requirements.txt`. If the virtual environment directory already exists but its interpreter is missing, the script recreates it before installing packages.
 
 The shared requirements file is:
 

@@ -182,11 +182,11 @@ class TraceStreamDecoder:
             header_tuple = _TRACE_PACKET_HEADER.unpack(self._buffer[:TRACE_PACKET_HEADER_BYTES])
             header = TracePacketHeader(*header_tuple)
             if header.version != TRACE_PACKET_VERSION:
-                raise TraceDecodeError(f"unsupported trace packet version: {header.version}")
+                del self._buffer[0]
+                continue
             if header.payload_len > TRACE_PACKET_PAYLOAD_BYTES:
-                raise TraceDecodeError(
-                    f"payload_len {header.payload_len} exceeds maximum {TRACE_PACKET_PAYLOAD_BYTES}"
-                )
+                del self._buffer[0]
+                continue
 
             packet_size = TRACE_PACKET_HEADER_BYTES + header.payload_len
             if len(self._buffer) < packet_size:

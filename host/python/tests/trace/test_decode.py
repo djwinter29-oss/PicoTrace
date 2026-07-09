@@ -133,5 +133,23 @@ class TraceDecodeTests(unittest.TestCase):
         bad_header = struct.pack("<BBBBHHII", 1, TraceType.I2C, 0, 0, 113, 0, 1, 0)
         decoder = TraceStreamDecoder()
 
-        with self.assertRaises(TraceDecodeError):
-            decoder.append(bad_header)
+        self.assertEqual(decoder.append(bad_header), [])
+        self.assertLess(decoder.buffered_byte_count, len(bad_header))
+
+    def test_stream_decoder_resynchronizes_after_noise_before_valid_packet(self) -> None:
+        raw = b"STATUS" + make_packet_bytes(
+            trace_type=TraceType.I2C,
+            channel=3,
+            flags=int(TraceFlags.END),
+            payload=b"\x01\x00",
+            meta=1,
+            sequence=8,
+            timestamp_us=123,
+        )
+        decoder = TraceStreamDecoder()
+
+        packets = decoder.append(raw)
+
+        self.assertEqual(len(packets), 1)
+        self.assertEqual(packets[0].header.channel, 3)
+        self.assertEqual(packets[0].header.sequence, 8)

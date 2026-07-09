@@ -145,7 +145,18 @@ public sealed class TraceStreamDecoder
 
             var headerBytes = CollectionsMarshal.AsSpan(_buffer).Slice(0, TraceDecoder.TracePacketHeaderBytes);
             var header = TraceDecoder.DecodeHeader(headerBytes);
-            TraceDecoder.ValidateHeader(header);
+            if (header.Version != TraceDecoder.TracePacketVersion)
+            {
+                _buffer.RemoveAt(0);
+                continue;
+            }
+
+            if (header.PayloadLength > TraceDecoder.TracePacketPayloadBytes)
+            {
+                _buffer.RemoveAt(0);
+                continue;
+            }
+
             var packetSize = TraceDecoder.TracePacketHeaderBytes + header.PayloadLength;
             if (_buffer.Count < packetSize)
             {

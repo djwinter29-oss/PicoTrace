@@ -80,4 +80,46 @@ public sealed class TraceDecoderTests
         Assert.AreEqual((byte)1, filtered[0].Header.Channel);
         Assert.AreEqual((byte)3, filtered[1].Header.Channel);
     }
+
+    [TestMethod]
+    public void TraceStreamDecoder_SkipsInvalidLeadingBytesAndResynchronizes()
+    {
+        var decoder = new TraceStreamDecoder();
+        var packetBytes = new byte[]
+        {
+            (byte)'S', (byte)'T', (byte)'A', (byte)'T', (byte)'U', (byte)'S',
+            1, 1, 2, 0,
+            2, 0,
+            1, 0,
+            5, 0, 0, 0,
+            9, 0, 0, 0,
+            1, 0x7F,
+        };
+
+        var packets = decoder.Append(packetBytes);
+
+        Assert.AreEqual(1, packets.Count);
+        Assert.AreEqual((byte)2, packets[0].Header.Channel);
+        Assert.AreEqual((uint)5, packets[0].Header.Sequence);
+        Assert.AreEqual(0, decoder.BufferedByteCount);
+    }
+
+    [TestMethod]
+    public void TraceStreamDecoder_SkipsInvalidPayloadLengthHeader()
+    {
+        var decoder = new TraceStreamDecoder();
+        var invalidHeader = new byte[]
+        {
+            1, 1, 0, 0,
+            113, 0,
+            0, 0,
+            1, 0, 0, 0,
+            0, 0, 0, 0,
+        };
+
+        var packets = decoder.Append(invalidHeader);
+
+        Assert.AreEqual(0, packets.Count);
+        Assert.IsTrue(decoder.BufferedByteCount < invalidHeader.Length);
+    }
 }
