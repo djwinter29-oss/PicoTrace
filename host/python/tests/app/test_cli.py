@@ -17,6 +17,20 @@ class CliTests(unittest.TestCase):
         stream_channel_mock.assert_called_once_with(4)
         spawn_monitor_window_mock.assert_not_called()
 
+    def test_trace_all_defaults_to_foreground_off_windows(self) -> None:
+        with mock.patch.object(cli.sys, "platform", "linux"), mock.patch(
+            "picotrace.app.cli._stream_all_with_hooks", return_value=0
+        ) as stream_all_mock, mock.patch("picotrace.app.cli._spawn_monitor_window") as spawn_monitor_window_mock:
+            exit_code = cli.main(["trace", "--all"])
+
+        self.assertEqual(exit_code, 0)
+        stream_all_mock.assert_called_once_with()
+        spawn_monitor_window_mock.assert_not_called()
+
+    def test_trace_rejects_all_and_channel_together(self) -> None:
+        with self.assertRaises(SystemExit):
+            cli.main(["trace", "--all", "--channel", "4"])
+
     def test_start_monitor_on_non_windows_uses_foreground_configured_monitor_for_configured_session(self) -> None:
         manager = cli._MonitorManager()
         configure = mock.Mock()
@@ -271,6 +285,26 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         stop_monitor_mock.assert_called_once()
+
+    def test_run_monitor_all_streams_without_channel_filter(self) -> None:
+        args = mock.Mock(
+            channel=None,
+            all=True,
+            label="all trace traffic",
+            start_gate=None,
+            ready_gate=None,
+            stop_kind=None,
+            stop_channel=None,
+        )
+
+        with mock.patch("picotrace.app.cli._stream_all_with_hooks", return_value=0) as stream_all_mock, mock.patch(
+            "picotrace.app.cli._stop_monitor_best_effort"
+        ) as stop_monitor_mock:
+            exit_code = cli._run_monitor(args)
+
+        self.assertEqual(exit_code, 0)
+        stream_all_mock.assert_called_once()
+        stop_monitor_mock.assert_called_once_with(None)
 
     def test_run_foreground_configured_monitor_stops_channel_after_stream_returns(self) -> None:
         configure = mock.Mock()

@@ -31,6 +31,7 @@ Current responsibilities:
 - configure one I2C channel sample rate
 - configure one SPI logical channel on its owning bus
 - stream one logical trace channel to stdout
+- stream all decoded trace traffic to stdout without applying a host-side channel filter
 
 The CLI intentionally uses the existing `picotrace.control` API instead of talking to USB directly.
 
@@ -49,6 +50,8 @@ Cleanup is intentionally best-effort. The app tries to send the matching stop co
 
 Channel selection is intentionally lightweight at the CLI boundary. The trace stream path treats the selected channel as a host-side packet filter, so a selection with no matching traffic simply produces no output. The app does not add an extra strict host-only policy layer for that case.
 
+For workflows that already use another control path, the CLI also supports `trace --all`. That path leaves the `TraceChannelRegistry` empty, assumes another interface such as the CDC CLI owns configuration, and keeps the bulk trace monitor open until the operator stops it.
+
 ## Data Flow
 
 Configuration flow:
@@ -62,7 +65,7 @@ Configuration flow:
 
 Streaming flow:
 
-1. the CLI creates a `TraceChannelRegistry` for one channel
+1. the CLI creates a `TraceChannelRegistry` for one channel, or leaves it empty for `trace --all`
 2. the CLI calls `iter_trace_packets(...)`
 3. packets not matching the registered channel are filtered out by the trace library
 4. matching packets are decoded into text lines and printed to stdout

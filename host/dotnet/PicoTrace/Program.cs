@@ -55,6 +55,7 @@ internal static class Program
         Console.WriteLine("  i2c --channel <0-3> --sample-hz <hz> [--no-stream]");
         Console.WriteLine("  spi --channel <0-5> [--capture MOSI|MOSI_MISO] [--spi-mode 0-3] [--timeout-us <us>] [--no-stream]");
         Console.WriteLine("  trace --channel <0-255>");
+        Console.WriteLine("  trace --all");
     }
 
     private static int RunStatus() => ControlOperations.WithControl(ControlOperations.PrintDeviceStatus);
@@ -109,7 +110,9 @@ internal static class Program
             stop: stop);
     }
 
-    private static int RunTrace(TraceOptions options) => TraceStreaming.StreamChannel(options.Channel);
+    private static int RunTrace(TraceOptions options) => options.All
+        ? TraceStreaming.StreamAll()
+        : TraceStreaming.StreamChannel(options.Channel!.Value);
 
     private static int RunForegroundConfiguredMonitor(int channel, Action configure, Action? stop)
     {
@@ -197,7 +200,7 @@ internal static class Program
                     RunReboot(false);
                     break;
                 case "9":
-                    RunTrace(new TraceOptions(PromptInt("logical trace channel: ", 0, 255)));
+                    RunTrace(new TraceOptions(PromptInt("logical trace channel: ", 0, 255), false));
                     break;
                 default:
                     Console.WriteLine("unknown selection");
@@ -332,6 +335,7 @@ internal static class Program
     private static TraceOptions ParseTraceOptions(string[] args)
     {
         int? channel = null;
+        var all = false;
         for (var index = 0; index < args.Length; index += 1)
         {
             switch (args[index])
@@ -339,17 +343,30 @@ internal static class Program
                 case "--channel":
                     channel = ParseRequiredInt(args, ref index);
                     break;
+                case "--all":
+                    all = true;
+                    break;
                 default:
                     throw new ArgumentException($"unknown option {args[index]}");
             }
         }
 
-        if (channel is null or < 0 or > 255)
+        if (all && channel is not null)
         {
-            throw new ArgumentException("trace channel must be between 0 and 255");
+            throw new ArgumentException("trace accepts either --channel or --all, but not both");
         }
 
-        return new TraceOptions(channel.Value);
+        if (all)
+        {
+            return new TraceOptions(null, true);
+        }
+
+        if (channel is null or < 0 or > 255)
+        {
+            throw new ArgumentException("trace requires either --channel <0-255> or --all");
+        }
+
+        return new TraceOptions(channel.Value, false);
     }
 
     private static int ParseRequiredInt(string[] args, ref int index)
@@ -414,5 +431,5 @@ internal static class Program
 
     private readonly record struct I2cOptions(int Channel, uint SampleHz, bool NoStream);
     private readonly record struct SpiOptions(int Channel, SpiCaptureMode Capture, int SpiMode, uint TimeoutUs, bool NoStream);
-    private readonly record struct TraceOptions(int Channel);
+    private readonly record struct TraceOptions(int? Channel, bool All);
 }

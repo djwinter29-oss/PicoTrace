@@ -75,6 +75,7 @@ Supported commands:
 - `i2c --channel <0-3> --sample-hz <hz> [--no-stream]`
 - `spi --channel <0-5> [--capture MOSI|MOSI_MISO] [--spi-mode 0-3] [--timeout-us <us>] [--no-stream]`
 - `trace --channel <0-255>`
+- `trace --all`
 
 Examples:
 
@@ -83,7 +84,10 @@ dotnet run --project host/dotnet/PicoTrace -- status
 dotnet run --project host/dotnet/PicoTrace -- i2c --channel 0 --sample-hz 1000000
 dotnet run --project host/dotnet/PicoTrace -- spi --channel 4 --capture MOSI_MISO --spi-mode 0 --timeout-us 100
 dotnet run --project host/dotnet/PicoTrace -- trace --channel 0
+dotnet run --project host/dotnet/PicoTrace -- trace --all
 ```
+
+`trace --all` is a passive bulk-only monitor. It assumes another host path such as the CDC CLI already owns control and configuration, prints every decoded trace packet without a host-side filter, and stays open idling until you stop it with `Ctrl+C`.
 
 If no command is provided, the app starts a simple interactive console menu.
 

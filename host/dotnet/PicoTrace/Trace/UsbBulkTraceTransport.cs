@@ -87,7 +87,7 @@ public static class UsbBulkTraceTransport
     }
 
     public static IEnumerable<TracePacket> IterTracePackets(
-        double durationSeconds = DefaultDurationSeconds,
+        double? durationSeconds = DefaultDurationSeconds,
         int vendorId = DefaultVid,
         int productId = DefaultPid,
         byte endpointAddress = DefaultVendorInEndpoint,
@@ -97,7 +97,7 @@ public static class UsbBulkTraceTransport
         Func<bool>? keepRunning = null,
         Action? onOpened = null)
     {
-        if (durationSeconds <= 0.0)
+        if (durationSeconds is not null && durationSeconds <= 0.0)
         {
             throw new ArgumentOutOfRangeException(nameof(durationSeconds), "durationSeconds must be positive");
         }
@@ -111,13 +111,13 @@ public static class UsbBulkTraceTransport
         var decoder = new TraceStreamDecoder();
         var reader = device.OpenEndpointReader((ReadEndpointID)endpointAddress);
         var buffer = new byte[readSize];
-        var deadline = TimeSpan.FromSeconds(durationSeconds);
+        var deadline = durationSeconds is null ? (TimeSpan?)null : TimeSpan.FromSeconds(durationSeconds.Value);
         var stopwatch = Stopwatch.StartNew();
         onOpened?.Invoke();
 
         try
         {
-            while (stopwatch.Elapsed < deadline)
+            while (deadline is null || stopwatch.Elapsed < deadline.Value)
             {
                 if (keepRunning is not null && !keepRunning())
                 {
@@ -158,7 +158,7 @@ public static class UsbBulkTraceTransport
     }
 
     public static IReadOnlyList<TracePacket> ReadTracePackets(
-        double durationSeconds = DefaultDurationSeconds,
+        double? durationSeconds = DefaultDurationSeconds,
         int vendorId = DefaultVid,
         int productId = DefaultPid,
         byte endpointAddress = DefaultVendorInEndpoint,

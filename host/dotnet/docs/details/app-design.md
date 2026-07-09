@@ -31,6 +31,7 @@ Current responsibilities:
 - configure one I2C channel sample rate
 - configure one SPI logical channel on its owning bus
 - stream one logical trace channel to stdout
+- stream all decoded trace traffic to stdout without applying a host-side channel filter
 
 The CLI intentionally uses the existing `PicoTrace.Control` and `PicoTrace.Trace` APIs instead of talking to USB directly.
 
@@ -46,6 +47,8 @@ Both styles are backed by the same control and trace library surfaces.
 Cleanup is intentionally best-effort. The app tries to send the matching stop command when a configured monitor closes, when foreground streaming exits, and when the interactive shell shuts down. If that stop command fails, the host still finishes local cleanup and exits.
 
 Channel selection is intentionally lightweight at the CLI boundary. The trace stream path treats the selected channel as a host-side packet filter, so a selection with no matching traffic simply produces no output.
+
+For workflows that already use another control path, the CLI also supports `trace --all`. That path skips channel registration entirely, assumes another interface such as the CDC CLI owns configuration, and keeps the bulk trace monitor open until the operator stops it.
 
 ## SPI Ownership Model
 
@@ -70,7 +73,7 @@ Configuration flow:
 
 Streaming flow:
 
-1. the CLI creates a `TraceChannelRegistry` for one channel
+1. the CLI creates a `TraceChannelRegistry` for one channel, or leaves it empty for `trace --all`
 2. the CLI calls `UsbBulkTraceTransport.IterTracePackets(...)`
 3. packets not matching the registered channel are filtered out by the trace library
 4. matching packets are decoded into text lines and printed to stdout

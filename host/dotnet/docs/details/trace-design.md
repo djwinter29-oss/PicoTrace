@@ -73,6 +73,11 @@ Current behavior:
 
 This is a consumer-side filter, not a firmware-side subscription model.
 
+The `.NET` CLI uses this directly for two trace workflows:
+
+- `trace --channel <n>` registers one channel and prints only matching packets
+- `trace --all` leaves the registry empty and prints the full decoded stream
+
 That means:
 
 - USB bandwidth is unchanged

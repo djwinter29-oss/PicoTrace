@@ -22,11 +22,12 @@ from .control_ops import (
     _stop_spi_logical_channel,
     _with_control,
 )
-from .trace_stream import _stream_channel, _stream_channel_with_hooks
+from .trace_stream import _stream_all_with_hooks, _stream_channel, _stream_channel_with_hooks
 
 
 _MONITOR_START_GATE_TIMEOUT_SECONDS = 5.0
 _MONITOR_READY_TIMEOUT_SECONDS = 5.0
+_ALL_TRACE_CHANNEL = -1
 
 
 @dataclass(frozen=True)
@@ -379,11 +380,13 @@ def _spawn_monitor_window(
         "-m",
         "picotrace.app.cli",
         "_monitor",
-        "--channel",
-        str(channel),
         "--label",
         label,
     ]
+    if channel == _ALL_TRACE_CHANNEL:
+        command.append("--all")
+    else:
+        command.extend(["--channel", str(channel)])
     if start_gate is not None:
         command.extend(["--start-gate", str(start_gate)])
     if ready_gate is not None:
@@ -428,6 +431,8 @@ def _start_monitor(
 ) -> int:
     if foreground:
         try:
+            if channel == _ALL_TRACE_CHANNEL:
+                return _stream_all_with_hooks()
             return _stream_channel_with_hooks(channel)
         finally:
             if stop is not None:
@@ -585,6 +590,10 @@ def _run_status(_: argparse.Namespace) -> int:
 
 
 def _run_stream(args: argparse.Namespace) -> int:
+    if getattr(args, "all", False) is True:
+        label = getattr(args, "label", "all trace traffic")
+        return _start_monitor(_ALL_TRACE_CHANNEL, label=label, foreground=args.foreground)
+
     label = getattr(args, "label", f"trace channel {args.channel}")
     return _start_monitor(args.channel, label=label, foreground=args.foreground)
 
@@ -681,8 +690,13 @@ def _run_monitor(args: argparse.Namespace) -> int:
         started = True
         _mark_monitor_ready(ready_gate)
 
-    print(f"monitor window active for channel {args.channel} ({args.label}); close this window or press Ctrl+C to stop")
+    if getattr(args, "all", False) is True:
+        print(f"monitor window active for all trace traffic ({args.label}); close this window or press Ctrl+C to stop")
+    else:
+        print(f"monitor window active for channel {args.channel} ({args.label}); close this window or press Ctrl+C to stop")
     try:
+        if getattr(args, "all", False) is True:
+            return _stream_all_with_hooks(on_started=mark_started)
         return _stream_channel_with_hooks(args.channel, on_started=mark_started)
     finally:
         if not started:
@@ -833,8 +847,10 @@ def _build_parser() -> argparse.ArgumentParser:
     spi_parser.add_argument("--no-stream", action="store_true", help="Configure the device without starting the trace stream")
     spi_parser.set_defaults(func=_run_spi)
 
-    trace_parser = subparsers.add_parser("trace", help="Stream one logical channel without changing device configuration")
-    trace_parser.add_argument("--channel", type=int, required=True)
+    trace_parser = subparsers.add_parser("trace", help="Stream one logical channel or all traffic without changing device configuration")
+    trace_group = trace_parser.add_mutually_exclusive_group(required=True)
+    trace_group.add_argument("--channel", type=int)
+    trace_group.add_argument("--all", action="store_true", help="Stream all decoded trace traffic without a channel filter")
     trace_parser.add_argument(
         "--foreground",
         action="store_true",
@@ -848,7 +864,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _build_monitor_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--channel", type=int, required=True)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--channel", type=int)
+    group.add_argument("--all", action="store_true")
     parser.add_argument("--label", default="trace channel")
     parser.add_argument("--start-gate")
     parser.add_argument("--ready-gate")

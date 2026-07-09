@@ -38,6 +38,8 @@ Monitor shutdown is intentionally best-effort. The host always tries to send the
 
 Channel selection is also intentionally lightweight on the host side. The trace path uses the requested channel as a filter over decoded packets, so a channel with no matching traffic simply prints nothing. The CLI avoids adding extra host-only policy for that case and relies on the existing device and stream behavior instead.
 
+For workflows that already use another control path, the CLI also supports `trace --all`. That path is a passive bulk-only monitor: it skips channel registration entirely, assumes configuration comes from another interface such as the CDC CLI, and stays open idling until you stop it with `Ctrl+C`.
+
 Run the Python host tests with:
 
 ```bash
@@ -138,6 +140,13 @@ from picotrace.trace import iter_trace_packets
 
 for packet in iter_trace_packets(duration_seconds=5):
 	print(packet.header.trace_type, packet.header.payload_len)
+```
+
+Stream one logical channel or the full decoded trace stream from the CLI without changing device configuration:
+
+```bash
+picotrace trace --channel 4
+picotrace trace --all
 ```
 
 ## HID control library

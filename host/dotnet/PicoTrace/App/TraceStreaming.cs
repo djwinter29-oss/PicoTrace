@@ -29,9 +29,25 @@ internal static class TraceStreaming
 
     public static int StreamChannel(int channel) => StreamChannelWithHooks(channel);
 
+    public static int StreamAll() => StreamAllWithHooks();
+
     public static int StreamChannelWithHooks(int channel, Action? onStarted = null)
     {
         var registry = new TraceChannelRegistry([channel]);
+        return StreamWithRegistry(registry, $"streaming channel {channel}; press Ctrl+C to stop", StreamChunkSeconds, onStarted);
+    }
+
+    public static int StreamAllWithHooks(Action? onStarted = null)
+    {
+        return StreamWithRegistry(new TraceChannelRegistry(), "streaming all trace traffic; press Ctrl+C to stop", null, onStarted);
+    }
+
+    private static int StreamWithRegistry(
+        TraceChannelRegistry registry,
+        string startMessage,
+        double? durationSeconds,
+        Action? onStarted)
+    {
         var cancelRequested = false;
         ConsoleCancelEventHandler? handler = null;
         handler = (_, eventArgs) =>
@@ -41,11 +57,11 @@ internal static class TraceStreaming
         };
 
         Console.CancelKeyPress += handler;
-        Console.WriteLine($"streaming channel {channel}; press Ctrl+C to stop");
+        Console.WriteLine(startMessage);
         try
         {
             foreach (var packet in UsbBulkTraceTransport.IterTracePackets(
-                         durationSeconds: StreamChunkSeconds,
+                         durationSeconds: durationSeconds,
                          channelRegistry: registry,
                          keepRunning: () => !cancelRequested,
                          onOpened: onStarted))

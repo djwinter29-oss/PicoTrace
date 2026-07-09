@@ -135,7 +135,7 @@ def close_trace_device(device: usb.core.Device, interface_number: int | None) ->
 
 
 def iter_trace_packets(
-    duration_seconds: float = DEFAULT_DURATION_SECONDS,
+    duration_seconds: float | None = DEFAULT_DURATION_SECONDS,
     vid: int = DEFAULT_VID,
     pid: int = DEFAULT_PID,
     endpoint_address: int = DEFAULT_VENDOR_IN_ENDPOINT,
@@ -145,7 +145,7 @@ def iter_trace_packets(
     keep_running: Callable[[], bool] | None = None,
     on_opened: Callable[[], None] | None = None,
 ):
-    if duration_seconds <= 0.0:
+    if duration_seconds is not None and duration_seconds <= 0.0:
         raise ValueError("duration_seconds must be positive")
 
     if read_size <= 0:
@@ -156,7 +156,7 @@ def iter_trace_packets(
     handle = device._ctx.handle
     read_buffer = array.array("B", [0]) * read_size
     decoder = TraceStreamDecoder()
-    deadline = time.perf_counter() + duration_seconds
+    deadline = None if duration_seconds is None else time.perf_counter() + duration_seconds
     if on_opened is not None:
         on_opened()
 
@@ -164,7 +164,7 @@ def iter_trace_packets(
         while True:
             if keep_running is not None and not keep_running():
                 break
-            if time.perf_counter() >= deadline:
+            if deadline is not None and time.perf_counter() >= deadline:
                 break
 
             try:
@@ -185,7 +185,7 @@ def iter_trace_packets(
 
 
 def read_trace_packets(
-    duration_seconds: float = DEFAULT_DURATION_SECONDS,
+    duration_seconds: float | None = DEFAULT_DURATION_SECONDS,
     vid: int = DEFAULT_VID,
     pid: int = DEFAULT_PID,
     endpoint_address: int = DEFAULT_VENDOR_IN_ENDPOINT,

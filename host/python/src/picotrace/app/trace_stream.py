@@ -36,12 +36,40 @@ def _stream_channel(channel: int) -> int:
     return _stream_channel_with_hooks(channel)
 
 
+def _stream_all() -> int:
+    return _stream_all_with_hooks()
+
+
 def _stream_channel_with_hooks(channel: int, *, on_started: Callable[[], None] | None = None) -> int:
     registry = TraceChannelRegistry([channel])
-    print(f"streaming channel {channel}; press Ctrl+C to stop")
+    return _stream_with_registry(
+        registry,
+        f"streaming channel {channel}; press Ctrl+C to stop",
+        duration_seconds=_STREAM_CHUNK_SECONDS,
+        on_started=on_started,
+    )
+
+
+def _stream_all_with_hooks(*, on_started: Callable[[], None] | None = None) -> int:
+    return _stream_with_registry(
+        TraceChannelRegistry(),
+        "streaming all trace traffic; press Ctrl+C to stop",
+        duration_seconds=None,
+        on_started=on_started,
+    )
+
+
+def _stream_with_registry(
+    registry: TraceChannelRegistry,
+    start_message: str,
+    *,
+    duration_seconds: float | None,
+    on_started: Callable[[], None] | None = None,
+) -> int:
+    print(start_message)
     try:
         for packet in iter_trace_packets(
-            duration_seconds=_STREAM_CHUNK_SECONDS,
+            duration_seconds=duration_seconds,
             channel_registry=registry,
             on_opened=on_started,
         ):
