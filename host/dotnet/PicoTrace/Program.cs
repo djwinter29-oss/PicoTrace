@@ -1,8 +1,5 @@
-using System.Diagnostics;
-using LibUsbDotNet;
-using LibUsbDotNet.Info;
-using LibUsbDotNet.LibUsb;
-using LibUsbDotNet.Main;
+using PicoTrace.App;
+using PicoTrace.Trace;
 
 namespace PicoTrace;
 
@@ -10,215 +7,412 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
-        var options = ParseArguments(args);
-
         try
         {
-            var stats = CaptureBulkStream(options);
-            Console.WriteLine($"total bytes read: {stats.TotalBytes}");
-            Console.WriteLine($"average speed: {stats.BytesPerSecond:F2} B/s");
-            return 0;
+            return Run(args);
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"capture failed: {ex.Message}");
+            Console.Error.WriteLine($"picotrace failed: {ex.Message}");
             return 1;
         }
     }
 
-    private static CaptureOptions ParseArguments(string[] args)
+    private static int Run(string[] args)
     {
-        var options = new CaptureOptions(
-            VendorId: Defaults.Vid,
-            ProductId: Defaults.Pid,
-            EndpointAddress: Defaults.EndpointAddress,
-            DurationSeconds: Defaults.DurationSeconds,
-            ReadSize: Defaults.ReadSize,
-            TimeoutMilliseconds: Defaults.TimeoutMilliseconds);
-
-        for (var index = 0; index < args.Length; index += 1)
+        if (args.Length == 0)
         {
-            var argument = args[index];
-
-            if (argument is "--help" or "-h")
-            {
-                PrintUsage();
-                return options;
-            }
-
-            if (index + 1 >= args.Length)
-            {
-                throw new ArgumentException($"missing value for {argument}");
-            }
-
-            var value = args[index + 1];
-
-            switch (argument)
-            {
-                case "--duration":
-                    options = options with { DurationSeconds = double.Parse(value, System.Globalization.CultureInfo.InvariantCulture) };
-                    break;
-                case "--vid":
-                    options = options with { VendorId = ParseInt(value) };
-                    break;
-                case "--pid":
-                    options = options with { ProductId = ParseInt(value) };
-                    break;
-                case "--endpoint":
-                    options = options with { EndpointAddress = (byte)ParseInt(value) };
-                    break;
-                case "--read-size":
-                    options = options with { ReadSize = int.Parse(value, System.Globalization.CultureInfo.InvariantCulture) };
-                    break;
-                case "--timeout-ms":
-                    options = options with { TimeoutMilliseconds = int.Parse(value, System.Globalization.CultureInfo.InvariantCulture) };
-                    break;
-                default:
-                    throw new ArgumentException($"unknown argument {argument}");
-            }
-
-            index += 1;
+            return InteractiveMode();
         }
 
-        if (options.DurationSeconds <= 0.0)
+        if (args[0] is "--help" or "-h")
         {
-            throw new ArgumentException("duration must be positive");
+            PrintUsage();
+            return 0;
         }
 
-        if (options.ReadSize <= 0)
+        return args[0] switch
         {
-            throw new ArgumentException("read size must be positive");
-        }
-
-        return options;
+            "status" => RunStatus(),
+            "stream" => RunStreamState(ParseState(args)),
+            "led" => RunLed(ParseState(args)),
+            "reboot" => RunReboot(args.Skip(1).Contains("--yes", StringComparer.OrdinalIgnoreCase)),
+            "i2c" => RunI2c(ParseI2cOptions(args[1..])),
+            "spi" => RunSpi(ParseSpiOptions(args[1..])),
+            "trace" => RunTrace(ParseTraceOptions(args[1..])),
+            _ => throw new ArgumentException($"unknown command {args[0]}")
+        };
     }
 
     private static void PrintUsage()
     {
-        Console.WriteLine("Capture PicoTrace vendor bulk data and report total bytes plus average speed.");
-        Console.WriteLine("Options:");
-        Console.WriteLine("  --duration <seconds>");
-        Console.WriteLine("  --vid <vendor-id>");
-        Console.WriteLine("  --pid <product-id>");
-        Console.WriteLine("  --endpoint <endpoint-address>");
-        Console.WriteLine("  --read-size <bytes>");
-        Console.WriteLine("  --timeout-ms <milliseconds>");
+        Console.WriteLine("PicoTrace control and trace CLI");
+        Console.WriteLine("Commands:");
+        Console.WriteLine("  status");
+        Console.WriteLine("  stream <on|off>");
+        Console.WriteLine("  led <on|off>");
+        Console.WriteLine("  reboot [--yes]");
+        Console.WriteLine("  i2c --channel <0-3> --sample-hz <hz> [--no-stream]");
+        Console.WriteLine("  spi --channel <0-5> [--capture MOSI|MOSI_MISO] [--spi-mode 0-3] [--timeout-us <us>] [--no-stream]");
+        Console.WriteLine("  trace --channel <0-255>");
     }
 
-    private static int ParseInt(string value)
+    private static int RunStatus() => ControlOperations.WithControl(ControlOperations.PrintDeviceStatus);
+
+    private static int RunStreamState(bool enabled) => ControlOperations.WithControl(control => control.SetStreamEnabled(enabled));
+
+    private static int RunLed(bool on) => ControlOperations.WithControl(control => control.SetLed(on));
+
+    private static int RunReboot(bool yes)
     {
-        if (value.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+        if (!yes)
         {
-            return Convert.ToInt32(value[2..], 16);
+            Console.Write("reboot the PicoTrace device? [y/N]: ");
+            var answer = (Console.ReadLine() ?? string.Empty).Trim().ToLowerInvariant();
+            if (answer is not ("y" or "yes"))
+            {
+                Console.WriteLine("reboot cancelled");
+                return 1;
+            }
         }
 
-        return int.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+        return ControlOperations.WithControl(control => control.Reboot());
     }
 
-    private static CaptureStats CaptureBulkStream(CaptureOptions options)
+    private static int RunI2c(I2cOptions options)
     {
-        using var context = new UsbContext();
-        var device = context.List()
-            .OfType<UsbDevice>()
-            .FirstOrDefault(candidate =>
-                candidate.Info.VendorId == options.VendorId &&
-                candidate.Info.ProductId == options.ProductId);
-        if (device is null)
+        Action stop = () => ControlOperations.StopI2cChannel(options.Channel);
+        if (options.NoStream)
         {
-            throw new InvalidOperationException($"Device {options.VendorId:x4}:{options.ProductId:x4} not found");
+            ControlOperations.PrintConfiguredI2cChannel(options.Channel, options.SampleHz);
+            return 0;
         }
 
-        device.Open();
+        return RunForegroundConfiguredMonitor(
+            options.Channel,
+            configure: () => ControlOperations.PrintConfiguredI2cChannel(options.Channel, options.SampleHz),
+            stop: stop);
+    }
 
-        IUsbDevice? wholeDevice = device as IUsbDevice;
-        var claimedInterface = -1;
-        UsbEndpointReader? reader = null;
-        var stopwatch = Stopwatch.StartNew();
-        var totalBytes = 0L;
-        var buffer = new byte[options.ReadSize];
+    private static int RunSpi(SpiOptions options)
+    {
+        Action stop = () => ControlOperations.StopSpiLogicalChannel(options.Channel);
+        if (options.NoStream)
+        {
+            ControlOperations.PrintConfiguredSpiChannel(options.Channel, options.Capture, options.SpiMode, options.TimeoutUs);
+            return 0;
+        }
 
+        return RunForegroundConfiguredMonitor(
+            options.Channel,
+            configure: () => ControlOperations.PrintConfiguredSpiChannel(options.Channel, options.Capture, options.SpiMode, options.TimeoutUs),
+            stop: stop);
+    }
+
+    private static int RunTrace(TraceOptions options) => TraceStreaming.StreamChannel(options.Channel);
+
+    private static int RunForegroundConfiguredMonitor(int channel, Action configure, Action? stop)
+    {
+        var started = false;
         try
         {
-            if (wholeDevice is not null)
+            configure();
+            return TraceStreaming.StreamChannelWithHooks(channel, () => started = true);
+        }
+        catch
+        {
+            if (!started)
             {
-                wholeDevice.SetConfiguration(1);
-                claimedInterface = FindInterfaceNumber(device, options.EndpointAddress);
-                wholeDevice.ClaimInterface(claimedInterface);
+                if (stop is not null)
+                {
+                    RunBestEffort(stop);
+                }
+                else
+                {
+                    ControlOperations.DisableStreamBestEffort();
+                }
             }
 
-            reader = device.OpenEndpointReader((ReadEndpointID)options.EndpointAddress);
-            var deadline = TimeSpan.FromSeconds(options.DurationSeconds);
-
-            while (stopwatch.Elapsed < deadline)
-            {
-                var error = reader.Read(buffer, options.TimeoutMilliseconds, out var bytesRead);
-                if (error == Error.Success)
-                {
-                    totalBytes += bytesRead;
-                    continue;
-                }
-
-                if (error == Error.Timeout)
-                {
-                    continue;
-                }
-
-                throw new InvalidOperationException($"USB read failed: {error}");
-            }
+            throw;
         }
         finally
         {
-            if ((wholeDevice is not null) && (claimedInterface >= 0))
+            if (started && stop is not null)
             {
-                wholeDevice.ReleaseInterface(claimedInterface);
+                RunBestEffort(stop);
             }
-
-            device.Close();
         }
-
-        stopwatch.Stop();
-        return new CaptureStats(totalBytes, stopwatch.Elapsed.TotalSeconds);
     }
 
-    private static int FindInterfaceNumber(UsbDevice device, byte endpointAddress)
+    private static int InteractiveMode()
     {
-        foreach (UsbConfigInfo configuration in device.Configs)
+        while (true)
         {
-            foreach (UsbInterfaceInfo interfaceInfo in configuration.Interfaces)
+            Console.WriteLine();
+            Console.WriteLine("PicoTrace CLI");
+            Console.WriteLine("1. status");
+            Console.WriteLine("2. stream on");
+            Console.WriteLine("3. stream off");
+            Console.WriteLine("4. led on");
+            Console.WriteLine("5. led off");
+            Console.WriteLine("6. configure i2c channel and stream");
+            Console.WriteLine("7. configure spi channel and stream");
+            Console.WriteLine("8. reboot");
+            Console.WriteLine("9. stream existing channel");
+            Console.WriteLine("0. exit");
+            Console.Write("> ");
+
+            var choice = Console.ReadLine()?.Trim() ?? string.Empty;
+            switch (choice)
             {
-                foreach (UsbEndpointInfo endpointInfo in interfaceInfo.Endpoints)
-                {
-                    if (endpointInfo.EndpointAddress == endpointAddress)
-                    {
-                        return interfaceInfo.Number;
-                    }
-                }
+                case "0":
+                    return 0;
+                case "1":
+                    RunStatus();
+                    break;
+                case "2":
+                    RunStreamState(true);
+                    break;
+                case "3":
+                    RunStreamState(false);
+                    break;
+                case "4":
+                    RunLed(true);
+                    break;
+                case "5":
+                    RunLed(false);
+                    break;
+                case "6":
+                    RunI2c(new I2cOptions(PromptInt("i2c channel [0-3]: ", 0, 3), (uint)PromptInt("sample_hz: ", 1, int.MaxValue), false));
+                    break;
+                case "7":
+                    var logicalChannel = PromptInt("spi logical channel [0-5]: ", 0, 5);
+                    var captureIndex = PromptInt("capture 1=MOSI 2=MOSI_MISO: ", 1, 2);
+                    var spiMode = PromptInt("spi_mode [0-3]: ", 0, 3);
+                    var timeoutUs = (uint)PromptInt("timeout_us: ", 1, int.MaxValue);
+                    var capture = captureIndex == 1 ? SpiCaptureMode.Mosi : SpiCaptureMode.MosiMiso;
+                    RunSpi(new SpiOptions(logicalChannel, capture, spiMode, timeoutUs, false));
+                    break;
+                case "8":
+                    RunReboot(false);
+                    break;
+                case "9":
+                    RunTrace(new TraceOptions(PromptInt("logical trace channel: ", 0, 255)));
+                    break;
+                default:
+                    Console.WriteLine("unknown selection");
+                    break;
+            }
+        }
+    }
+
+    private static int PromptInt(string prompt, int minimum, int maximum)
+    {
+        while (true)
+        {
+            Console.Write(prompt);
+            var raw = Console.ReadLine();
+            if (!int.TryParse(raw, out var value))
+            {
+                Console.WriteLine("enter a decimal integer");
+                continue;
+            }
+
+            if (value >= minimum && value <= maximum)
+            {
+                return value;
+            }
+
+            Console.WriteLine($"enter a value between {minimum} and {maximum}");
+        }
+    }
+
+    private static bool ParseState(string[] args)
+    {
+        if (args.Length < 2)
+        {
+            throw new ArgumentException("missing state for command");
+        }
+
+        return args[1] switch
+        {
+            "on" => true,
+            "off" => false,
+            _ => throw new ArgumentException($"unknown state {args[1]}")
+        };
+    }
+
+    private static I2cOptions ParseI2cOptions(string[] args)
+    {
+        int? channel = null;
+        uint? sampleHz = null;
+        var noStream = false;
+
+        for (var index = 0; index < args.Length; index += 1)
+        {
+            switch (args[index])
+            {
+                case "--channel":
+                    channel = ParseRequiredInt(args, ref index);
+                    break;
+                case "--sample-hz":
+                    sampleHz = ParseRequiredUInt(args, ref index, "--sample-hz");
+                    break;
+                case "--no-stream":
+                    noStream = true;
+                    break;
+                default:
+                    throw new ArgumentException($"unknown option {args[index]}");
             }
         }
 
-        throw new InvalidOperationException($"Endpoint 0x{endpointAddress:x2} not found on the device");
+        if (channel is null or < 0 or > 3)
+        {
+            throw new ArgumentException("i2c channel must be between 0 and 3");
+        }
+
+        if (sampleHz is null || sampleHz == 0)
+        {
+            throw new ArgumentException("sample_hz must be positive");
+        }
+
+        return new I2cOptions(channel.Value, sampleHz.Value, noStream);
     }
-}
 
-internal static class Defaults
-{
-    public const int Vid = 0xCAFE;
-    public const int Pid = 0x4003;
-    public const byte EndpointAddress = 0x83;
-    public const double DurationSeconds = 5.0;
-    public const int ReadSize = 16384;
-    public const int TimeoutMilliseconds = 250;
-}
+    private static SpiOptions ParseSpiOptions(string[] args)
+    {
+        int? channel = null;
+        var capture = SpiCaptureMode.MosiMiso;
+        var spiMode = 0;
+        uint timeoutUs = 100;
+        var noStream = false;
 
-internal readonly record struct CaptureOptions(
-    int VendorId = Defaults.Vid,
-    int ProductId = Defaults.Pid,
-    byte EndpointAddress = Defaults.EndpointAddress,
-    double DurationSeconds = Defaults.DurationSeconds,
-    int ReadSize = Defaults.ReadSize,
-    int TimeoutMilliseconds = Defaults.TimeoutMilliseconds);
+        for (var index = 0; index < args.Length; index += 1)
+        {
+            switch (args[index])
+            {
+                case "--channel":
+                    channel = ParseRequiredInt(args, ref index);
+                    break;
+                case "--capture":
+                    capture = ParseCapture(ParseRequiredString(args, ref index));
+                    break;
+                case "--spi-mode":
+                    spiMode = ParseRequiredInt(args, ref index);
+                    break;
+                case "--timeout-us":
+                    timeoutUs = ParseRequiredUInt(args, ref index, "--timeout-us");
+                    break;
+                case "--no-stream":
+                    noStream = true;
+                    break;
+                default:
+                    throw new ArgumentException($"unknown option {args[index]}");
+            }
+        }
 
-internal readonly record struct CaptureStats(long TotalBytes, double ElapsedSeconds)
-{
-    public double BytesPerSecond => ElapsedSeconds <= 0.0 ? 0.0 : TotalBytes / ElapsedSeconds;
+        if (channel is null or < 0 or > 5)
+        {
+            throw new ArgumentException("spi logical channel must be between 0 and 5");
+        }
+
+        if (spiMode is < 0 or > 3)
+        {
+            throw new ArgumentException("spi_mode must be between 0 and 3");
+        }
+
+        if (timeoutUs == 0)
+        {
+            throw new ArgumentException("timeout_us must be positive");
+        }
+
+        return new SpiOptions(channel.Value, capture, spiMode, timeoutUs, noStream);
+    }
+
+    private static TraceOptions ParseTraceOptions(string[] args)
+    {
+        int? channel = null;
+        for (var index = 0; index < args.Length; index += 1)
+        {
+            switch (args[index])
+            {
+                case "--channel":
+                    channel = ParseRequiredInt(args, ref index);
+                    break;
+                default:
+                    throw new ArgumentException($"unknown option {args[index]}");
+            }
+        }
+
+        if (channel is null or < 0 or > 255)
+        {
+            throw new ArgumentException("trace channel must be between 0 and 255");
+        }
+
+        return new TraceOptions(channel.Value);
+    }
+
+    private static int ParseRequiredInt(string[] args, ref int index)
+    {
+        var value = ParseRequiredString(args, ref index);
+        return value.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+            ? Convert.ToInt32(value[2..], 16)
+            : int.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static uint ParseRequiredUInt(string[] args, ref int index, string optionName)
+    {
+        var value = ParseRequiredString(args, ref index);
+        try
+        {
+            return value.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+                ? Convert.ToUInt32(value[2..], 16)
+                : uint.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+        }
+        catch (FormatException)
+        {
+            throw new ArgumentException($"{optionName} must be an unsigned integer");
+        }
+        catch (OverflowException)
+        {
+            throw new ArgumentException($"{optionName} must be an unsigned integer");
+        }
+    }
+
+    private static string ParseRequiredString(string[] args, ref int index)
+    {
+        if (index + 1 >= args.Length)
+        {
+            throw new ArgumentException($"missing value for {args[index]}");
+        }
+
+        index += 1;
+        return args[index];
+    }
+
+    private static SpiCaptureMode ParseCapture(string value)
+    {
+        return value.ToUpperInvariant() switch
+        {
+            "MOSI" => SpiCaptureMode.Mosi,
+            "MOSI_MISO" => SpiCaptureMode.MosiMiso,
+            _ => throw new ArgumentException($"unknown capture mode {value}")
+        };
+    }
+
+    private static void RunBestEffort(Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch
+        {
+            // Best-effort cleanup.
+        }
+    }
+
+    private readonly record struct I2cOptions(int Channel, uint SampleHz, bool NoStream);
+    private readonly record struct SpiOptions(int Channel, SpiCaptureMode Capture, int SpiMode, uint TimeoutUs, bool NoStream);
+    private readonly record struct TraceOptions(int Channel);
 }

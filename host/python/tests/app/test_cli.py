@@ -17,6 +17,31 @@ class CliTests(unittest.TestCase):
         stream_channel_mock.assert_called_once_with(4)
         spawn_monitor_window_mock.assert_not_called()
 
+    def test_start_monitor_on_non_windows_uses_foreground_configured_monitor_for_configured_session(self) -> None:
+        manager = cli._MonitorManager()
+        configure = mock.Mock()
+        stop = mock.Mock()
+
+        with mock.patch.object(cli.sys, "platform", "linux"), mock.patch(
+            "picotrace.app.cli._run_foreground_configured_monitor", return_value=0
+        ) as run_foreground_mock:
+            manager.start_monitor(2, label="i2c channel 2", configure=configure, stop=stop)
+
+        run_foreground_mock.assert_called_once_with(2, configure, stop=stop)
+
+    def test_start_monitor_on_non_windows_runs_stop_when_configure_fails(self) -> None:
+        manager = cli._MonitorManager()
+        stop = mock.Mock()
+
+        def configure() -> None:
+            raise RuntimeError("configure failed")
+
+        with mock.patch.object(cli.sys, "platform", "linux"):
+            with self.assertRaisesRegex(RuntimeError, "configure failed"):
+                manager.start_monitor(2, label="i2c channel 2", configure=configure, stop=stop)
+
+        stop.assert_called_once_with()
+
     def test_configure_and_start_monitor_terminates_new_monitor_on_configure_failure(self) -> None:
         process = mock.Mock()
 
@@ -292,6 +317,28 @@ class CliTests(unittest.TestCase):
         configure.assert_called_once_with()
         stop.assert_called_once_with()
 
+    def test_run_foreground_configured_monitor_stops_channel_when_configure_fails(self) -> None:
+        stop = mock.Mock()
+
+        def configure() -> None:
+            raise RuntimeError("configure failed")
+
+        with self.assertRaisesRegex(RuntimeError, "configure failed"):
+            cli._run_foreground_configured_monitor(2, configure, stop=stop)
+
+        stop.assert_called_once_with()
+
+    def test_run_foreground_configured_monitor_ignores_stop_failure_when_configure_fails(self) -> None:
+        stop = mock.Mock(side_effect=RuntimeError("stop failed"))
+
+        def configure() -> None:
+            raise RuntimeError("configure failed")
+
+        with self.assertRaisesRegex(RuntimeError, "configure failed"):
+            cli._run_foreground_configured_monitor(2, configure, stop=stop)
+
+        stop.assert_called_once_with()
+
     def test_stop_spi_monitor_restarts_remaining_sibling_windows(self) -> None:
         manager = cli._MonitorManager()
         old_processes = {channel: mock.Mock(name=f"old_{channel}") for channel in (0, 1, 2)}
@@ -523,3 +570,39 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(manager._processes, {})
         self.assertEqual(terminate_monitor_process_mock.call_count, 3)
+
+    def test_active_channels_stops_stale_non_spi_session_before_forgetting_it(self) -> None:
+        manager = cli._MonitorManager()
+        process = mock.Mock()
+        process.poll.return_value = 1
+        stop = mock.Mock()
+        manager._processes[2] = cli._MonitorSession(
+            process=process,
+            label="i2c channel 2",
+            channel=2,
+            stop=stop,
+            stop_config=cli._MonitorStopConfig(kind="i2c", channel=2),
+        )
+
+        active_channels = manager.active_channels()
+
+        self.assertEqual(active_channels, ())
+        stop.assert_called_once_with()
+        self.assertEqual(manager._processes, {})
+
+    def test_active_channels_ignores_stale_non_spi_stop_failure(self) -> None:
+        manager = cli._MonitorManager()
+        process = mock.Mock()
+        process.poll.return_value = 1
+        manager._processes[2] = cli._MonitorSession(
+            process=process,
+            label="i2c channel 2",
+            channel=2,
+            stop=mock.Mock(side_effect=RuntimeError("stop failed")),
+            stop_config=cli._MonitorStopConfig(kind="i2c", channel=2),
+        )
+
+        active_channels = manager.active_channels()
+
+        self.assertEqual(active_channels, ())
+        self.assertEqual(manager._processes, {})

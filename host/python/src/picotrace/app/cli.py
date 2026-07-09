@@ -103,14 +103,15 @@ class _MonitorManager:
         stop_config: _MonitorStopConfig | None = None,
     ) -> None:
         if not _supports_detached_monitors():
-            if configure is not None:
-                configure()
             print("detached monitor windows are unavailable on this platform; using foreground streaming in this console")
-            try:
-                _stream_channel(channel)
-            finally:
-                if stop is not None:
-                    _run_stop_callback_best_effort(stop)
+            if configure is not None:
+                _run_foreground_configured_monitor(channel, configure, stop=stop)
+            else:
+                try:
+                    _stream_channel(channel)
+                finally:
+                    if stop is not None:
+                        _run_stop_callback_best_effort(stop)
             return
 
         old_session = self._processes.pop(channel, None)
@@ -251,7 +252,9 @@ class _MonitorManager:
 
         for channel in stale_channels:
             if channel in self._processes and self._processes[channel].spi_config is None:
-                self._processes.pop(channel, None)
+                stale_session = self._processes.pop(channel, None)
+                if stale_session is not None:
+                    _stop_monitor_session(stale_session)
         return tuple(sorted(self._processes))
 
     def _spi_bus_sessions(self, bus: int) -> list[_MonitorSession]:
@@ -499,8 +502,8 @@ def _run_foreground_configured_monitor(
         nonlocal started
         started = True
 
-    configure()
     try:
+        configure()
         return _stream_channel_with_hooks(channel, on_started=mark_started)
     except Exception:
         if not started:
