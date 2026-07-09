@@ -106,6 +106,7 @@ class HidResponse:
 @dataclass(frozen=True)
 class HidDeviceStatus:
     stream_enabled: bool
+    firmware_version: str = ""
 
 
 @dataclass(frozen=True)
@@ -192,9 +193,19 @@ def decode_hid_response(report_bytes: bytes | bytearray | memoryview) -> HidResp
 
 
 def decode_device_status_payload(payload: bytes) -> HidDeviceStatus:
-    if len(payload) != 1:
-        raise HidProtocolError("GET_STATUS response must contain one payload byte")
-    return HidDeviceStatus(stream_enabled=(payload[0] != 0))
+    if len(payload) == 1:
+        return HidDeviceStatus(stream_enabled=(payload[0] != 0), firmware_version="")
+    if len(payload) < 2:
+        raise HidProtocolError("GET_STATUS response must contain at least one payload byte")
+
+    version_length = payload[1]
+    if len(payload) != (2 + version_length):
+        raise HidProtocolError("GET_STATUS response has an unexpected firmware version payload size")
+
+    return HidDeviceStatus(
+        stream_enabled=(payload[0] != 0),
+        firmware_version=payload[2 : 2 + version_length].decode("ascii"),
+    )
 
 
 def build_i2c_set_rate_payload(channel: int, sample_hz: int) -> bytes:

@@ -29,14 +29,31 @@ public sealed class HidProtocolTests
         report[0] = (byte)HidOpcode.GetStatus;
         report[1] = 9;
         report[2] = (byte)HidStatus.Ok;
-        report[3] = 1;
+        report[3] = 8;
         report[4] = 1;
+        report[5] = 6;
+        report[6] = (byte)'v';
+        report[7] = (byte)'1';
+        report[8] = (byte)'.';
+        report[9] = (byte)'2';
+        report[10] = (byte)'.';
+        report[11] = (byte)'3';
 
         var response = HidProtocol.DecodeHidResponse(report);
         var status = HidProtocol.DecodeDeviceStatusPayload(response.Payload);
 
         Assert.IsTrue(response.Ok);
         Assert.IsTrue(status.StreamEnabled);
+        Assert.AreEqual("v1.2.3", status.FirmwareVersion);
+    }
+
+    [TestMethod]
+    public void DecodeDeviceStatusPayload_AcceptsLegacyStreamOnlyPayload()
+    {
+        var status = HidProtocol.DecodeDeviceStatusPayload(new byte[] { 1 });
+
+        Assert.IsTrue(status.StreamEnabled);
+        Assert.AreEqual(string.Empty, status.FirmwareVersion);
     }
 
     [TestMethod]

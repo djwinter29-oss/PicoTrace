@@ -2,6 +2,7 @@
 
 #include "tusb.h"
 
+#include <stddef.h>
 #include <string.h>
 
 #include "app_control.h"
@@ -27,6 +28,10 @@
 #define USB_HID_SPI_MONITOR_ALL_STATUS_CHANNEL_BYTES 10u
 /** @brief Total payload bytes returned for the compact SPI all-status response. */
 #define USB_HID_SPI_MONITOR_ALL_STATUS_PAYLOAD_BYTES (SPI_MONITOR_CHANNEL_COUNT * USB_HID_SPI_MONITOR_ALL_STATUS_CHANNEL_BYTES)
+/** @brief Fixed bytes used by the shared device status fields before the version string. */
+#define USB_HID_DEVICE_STATUS_FIXED_BYTES 2u
+/** @brief Maximum firmware version bytes returned in the shared device status payload. */
+#define USB_HID_DEVICE_STATUS_MAX_VERSION_BYTES ((USB_HID_REPORT_SIZE - 4u) - USB_HID_DEVICE_STATUS_FIXED_BYTES)
 
 /** @brief Decode a 32-bit little-endian value from a HID payload buffer. */
 static uint32_t usb_hid_read_u32_le(const uint8_t *data) {
@@ -257,9 +262,20 @@ void usb_hid_poll(void) {
     case USB_HID_OPCODE_NOP:
         break;
     case USB_HID_OPCODE_GET_STATUS:
-        response.payload_length = 1u;
+    {
+        const char *firmware_version = app_control_firmware_version();
+        size_t version_length = strlen(firmware_version);
+
+        if (version_length > USB_HID_DEVICE_STATUS_MAX_VERSION_BYTES) {
+            version_length = USB_HID_DEVICE_STATUS_MAX_VERSION_BYTES;
+        }
+
+        response.payload_length = (uint8_t)(USB_HID_DEVICE_STATUS_FIXED_BYTES + version_length);
         response.payload[0] = app_control_stream_enabled() ? 1u : 0u;
+        response.payload[1] = (uint8_t)version_length;
+        memcpy(&response.payload[2], firmware_version, version_length);
         break;
+    }
     case USB_HID_OPCODE_STREAM_ENABLE:
         app_control_set_stream_enabled(true);
         break;

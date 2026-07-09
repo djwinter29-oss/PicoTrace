@@ -25,6 +25,8 @@ static bool device_cli_led(int argc, const char *const *argv);
 static bool device_cli_stream(int argc, const char *const *argv);
 /** @brief Handle the reboot command. */
 static bool device_cli_reboot(int argc, const char *const *argv);
+/** @brief Handle the firmware version command. */
+static bool device_cli_version(int argc, const char *const *argv);
 /** @brief Handle unknown command names by printing fixed help. */
 static bool device_cli_unknown(const char *command_name);
 
@@ -36,6 +38,7 @@ static const cli_shell_command_t device_cli_commands[] = {
     {"stream", "stream on|off", device_cli_stream},
     {"reboot", "reboot", device_cli_reboot},
     {"spimon", "spimon <bus> off|mosi|both|status", device_cli_spimon},
+    {"version", "version", device_cli_version},
 };
 
 /**
@@ -319,6 +322,20 @@ static bool device_cli_reboot(int argc, const char *const *argv) {
 
     app_control_reboot();
     return true;
+}
+
+/** @copydoc device_cli_version */
+static bool device_cli_version(int argc, const char *const *argv) {
+    char line[80];
+
+    (void)argv;
+
+    if (argc != 1) {
+        return cli_shell_write_line("Usage: version");
+    }
+
+    snprintf(line, sizeof(line), "firmware_version=%s", app_control_firmware_version());
+    return cli_shell_write_line(line);
 }
 
 /** @copydoc device_cli_unknown */

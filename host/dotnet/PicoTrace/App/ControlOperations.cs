@@ -18,6 +18,7 @@ internal static class ControlOperations
     {
         var status = control.GetStatus();
         Console.WriteLine($"stream_enabled={status.StreamEnabled}");
+        Console.WriteLine($"firmware_version={status.FirmwareVersion}");
 
         Console.WriteLine("i2c_status:");
         foreach (var channelStatus in control.I2cGetAllStatus())

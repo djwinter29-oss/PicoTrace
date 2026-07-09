@@ -3,6 +3,10 @@
 #include "driver/led.h"
 #include "driver/system.h"
 
+#ifndef PICOTRACE_FIRMWARE_VERSION
+#define PICOTRACE_FIRMWARE_VERSION "dev"
+#endif
+
 static volatile bool app_control_stream_on = true;
 static bool app_control_led_on;
 
@@ -27,4 +31,8 @@ void app_control_set_led(bool on) {
 
 void app_control_reboot(void) {
     system_reboot();
+}
+
+const char *app_control_firmware_version(void) {
+    return PICOTRACE_FIRMWARE_VERSION;
 }

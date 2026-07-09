@@ -7,6 +7,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 option(BRIDGE_ENABLE_COVERAGE "Enable host test coverage instrumentation" OFF)
+set(PICOTRACE_FIRMWARE_VERSION "test" CACHE STRING "Firmware version string exposed over CLI and HID in host tests")
 
 enable_testing()
 
@@ -48,6 +49,8 @@ target_include_directories(usb_app_test
         ../src/config
 )
 
+    target_compile_definitions(usb_app_test PRIVATE PICOTRACE_FIRMWARE_VERSION="${PICOTRACE_FIRMWARE_VERSION}")
+
 target_include_directories(i2c_monitor_runtime_test
     PRIVATE
         .
@@ -55,6 +58,8 @@ target_include_directories(i2c_monitor_runtime_test
         ../src
         ../src/config
 )
+
+    target_compile_definitions(i2c_monitor_runtime_test PRIVATE PICOTRACE_FIRMWARE_VERSION="${PICOTRACE_FIRMWARE_VERSION}")
 
 if (BRIDGE_ENABLE_COVERAGE)
     if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")

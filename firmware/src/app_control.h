@@ -29,4 +29,7 @@ void app_control_set_led(bool on);
 /** @brief Request a board reboot through the shared system control path. */
 void app_control_reboot(void);
 
+/** @brief Return the build-time firmware version string. */
+const char *app_control_firmware_version(void);
+
 #endif

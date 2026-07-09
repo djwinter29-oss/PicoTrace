@@ -3,9 +3,11 @@ from __future__ import annotations
 import unittest
 
 from picotrace.control.protocol import (
+    HidDeviceStatus,
     SpiCaptureMode,
     build_i2c_set_rate_payload,
     build_spi_set_config_payload,
+    decode_device_status_payload,
     decode_i2c_monitor_all_status_payload,
     decode_i2c_monitor_status_payload,
     decode_spi_monitor_all_status_payload,
@@ -14,6 +16,16 @@ from picotrace.control.protocol import (
 
 
 class HidProtocolTests(unittest.TestCase):
+    def test_decode_device_status_payload_accepts_legacy_stream_only_status(self) -> None:
+        status = decode_device_status_payload(b"\x01")
+
+        self.assertEqual(status, HidDeviceStatus(stream_enabled=True, firmware_version=""))
+
+    def test_decode_device_status_payload_decodes_firmware_version(self) -> None:
+        status = decode_device_status_payload(b"\x01\x06v1.2.3")
+
+        self.assertEqual(status, HidDeviceStatus(stream_enabled=True, firmware_version="v1.2.3"))
+
     def test_build_i2c_set_rate_payload_uses_little_endian_sample_rate(self) -> None:
         payload = build_i2c_set_rate_payload(2, 1_000_000)
 

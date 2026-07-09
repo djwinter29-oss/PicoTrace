@@ -7,6 +7,10 @@
     <AssemblyName>PicoTrace</AssemblyName>
     <RootNamespace>PicoTrace</RootNamespace>
     <Description>PicoTrace .NET host for RP2040 and RP2350 USB trace capture</Description>
+    <Version Condition="'$(Version)' == ''">0.1.0</Version>
+    <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">$(Version).0</AssemblyVersion>
+    <FileVersion Condition="'$(FileVersion)' == ''">$(Version).0</FileVersion>
+    <InformationalVersion Condition="'$(InformationalVersion)' == ''">$(Version)</InformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>

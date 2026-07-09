@@ -15,6 +15,7 @@ def _with_control(operation: Callable[[HidControlClient], None]) -> int:
 def _print_device_status(control: HidControlClient) -> None:
     status = control.get_status()
     print(f"stream_enabled={status.stream_enabled}")
+    print(f"firmware_version={status.firmware_version}")
 
     print("i2c_status:")
     for channel_status in control.i2c_get_all_status():

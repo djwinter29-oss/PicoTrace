@@ -62,7 +62,7 @@ public readonly record struct HidResponse(byte Opcode, byte Sequence, HidStatus 
     public bool Ok => Status is HidStatus.Ok;
 }
 
-public readonly record struct HidDeviceStatus(bool StreamEnabled);
+public readonly record struct HidDeviceStatus(bool StreamEnabled, string FirmwareVersion);
 
 public readonly record struct I2cMonitorStatus(
     byte Channel,
@@ -138,12 +138,23 @@ public static class HidProtocol
 
     public static HidDeviceStatus DecodeDeviceStatusPayload(ReadOnlySpan<byte> payload)
     {
-        if (payload.Length != 1)
+        if (payload.Length == 1)
         {
-            throw new HidProtocolException("GET_STATUS response must contain one payload byte");
+            return new HidDeviceStatus(payload[0] != 0, string.Empty);
         }
 
-        return new HidDeviceStatus(payload[0] != 0);
+        if (payload.Length < 2)
+        {
+            throw new HidProtocolException("GET_STATUS response must contain at least one payload byte");
+        }
+
+        var versionLength = payload[1];
+        if (payload.Length != 2 + versionLength)
+        {
+            throw new HidProtocolException("GET_STATUS response has an unexpected firmware version payload size");
+        }
+
+        return new HidDeviceStatus(payload[0] != 0, System.Text.Encoding.ASCII.GetString(payload[2..(2 + versionLength)]));
     }
 
     public static byte[] BuildI2cSetRatePayload(int channel, uint sampleHz)

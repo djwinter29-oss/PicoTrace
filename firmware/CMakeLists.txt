@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.13)
 include(pico_sdk_import.cmake)
 
 set(PICO_BOARD "pico" CACHE STRING "Pico SDK board target")
+set(PICOTRACE_FIRMWARE_VERSION "dev" CACHE STRING "Firmware version string exposed over CLI and HID")
 
 project(PicoTrace C CXX ASM)
 
@@ -49,6 +50,8 @@ target_link_libraries(picotrace
     tinyusb_device
     tinyusb_board
 )
+
+target_compile_definitions(picotrace PRIVATE PICOTRACE_FIRMWARE_VERSION="${PICOTRACE_FIRMWARE_VERSION}")
 
 pico_generate_pio_header(picotrace ${CMAKE_CURRENT_LIST_DIR}/src/trace/capture/i2c_monitor.pio)
 pico_generate_pio_header(picotrace ${CMAKE_CURRENT_LIST_DIR}/src/trace/capture/spi_monitor.pio)

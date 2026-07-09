@@ -1,51 +1,25 @@
-from .trace import (
-	I2cEvent,
-	I2cEventType,
-	DEFAULT_DURATION_SECONDS,
-	DEFAULT_PID,
-	DEFAULT_READ_SIZE,
-	DEFAULT_TIMEOUT_MS,
-	DEFAULT_VENDOR_IN_ENDPOINT,
-	DEFAULT_VID,
-	SpiCaptureMode,
-	SpiSamples,
-	TraceDecodeError,
-	TraceFlags,
-	TracePacket,
-	TracePacketHeader,
-	TraceStreamDecoder,
-	TraceType,
-	close_trace_device,
-	decode_i2c_events,
-	decode_spi_samples,
-	decode_trace_packet,
-	iter_trace_packets,
-	open_trace_device,
-	read_trace_packets,
-)
+import importlib.metadata
+from pathlib import Path
 
-__all__ = [
-	"I2cEvent",
-	"I2cEventType",
-	"DEFAULT_DURATION_SECONDS",
-	"DEFAULT_PID",
-	"DEFAULT_READ_SIZE",
-	"DEFAULT_TIMEOUT_MS",
-	"DEFAULT_VENDOR_IN_ENDPOINT",
-	"DEFAULT_VID",
-	"SpiCaptureMode",
-	"SpiSamples",
-	"TraceDecodeError",
-	"TraceFlags",
-	"TracePacket",
-	"TracePacketHeader",
-	"TraceStreamDecoder",
-	"TraceType",
-	"close_trace_device",
-	"decode_i2c_events",
-	"decode_spi_samples",
-	"decode_trace_packet",
-	"iter_trace_packets",
-	"open_trace_device",
-	"read_trace_packets",
-]
+
+def _resolve_package_version(distribution_name: str, package_file: str) -> str:
+	"""Return installed distribution version, or 0.0.0 for source-tree imports."""
+	try:
+		distribution = importlib.metadata.distribution(distribution_name)
+	except importlib.metadata.PackageNotFoundError:
+		return "0.0.0"
+
+	package_path = Path(package_file).resolve()
+	distribution_root = Path(str(distribution.locate_file(""))).resolve()
+
+	try:
+		package_path.relative_to(distribution_root)
+	except ValueError:
+		return "0.0.0"
+
+	return distribution.version
+
+
+__version__ = _resolve_package_version("picotrace", __file__)
+
+__all__ = ["__version__"]

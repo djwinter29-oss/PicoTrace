@@ -24,10 +24,10 @@
 static bool stub_ready = true;
 uint32_t stub_time_us32;
 static bool stub_cdc_connected = true;
-static uint8_t stub_cdc_rx_data[128];
+static uint8_t stub_cdc_rx_data[256];
 static uint32_t stub_cdc_rx_length;
 static uint32_t stub_cdc_rx_offset;
-static uint8_t stub_cdc_tx_data[128];
+static uint8_t stub_cdc_tx_data[256];
 static uint32_t stub_cdc_tx_length;
 static uint32_t stub_cdc_flush_calls;
 static bool stub_cdc_write_available_forced;
@@ -1403,8 +1403,22 @@ static void test_hid_builtin_command_returns_status_response(void) {
     assert(response.opcode == USB_HID_OPCODE_GET_STATUS);
     assert(response.sequence == 7u);
     assert(response.status == USB_HID_STATUS_OK);
-    assert(response.payload_length == 1u);
+    assert(response.payload_length == 6u);
     assert(response.payload[0] == 1u);
+    assert(response.payload[1] == 4u);
+    assert(memcmp(&response.payload[2], "test", 4u) == 0);
+}
+
+static void test_cli_version_reports_firmware_version(void) {
+    static const uint8_t payload[] = {'v', 'e', 'r', 's', 'i', 'o', 'n', '\r'};
+
+    reset_usb_stub();
+    load_cdc_rx(payload, sizeof(payload));
+
+    tud_cdc_rx_cb(0u);
+    device_cli_poll();
+
+    assert(strstr((const char *)stub_cdc_tx_data, "firmware_version=test") != NULL);
 }
 
 static void test_hid_stream_command_updates_shared_state(void) {
@@ -1764,6 +1778,7 @@ int main(void) {
     test_cli_unknown_command_writes_fixed_helper();
     test_cli_help_writes_response_without_connected_flag();
     test_cli_help_is_flushed_after_temporary_tx_backpressure();
+    test_cli_version_reports_firmware_version();
     test_cli_led_command_and_hid_led_command_share_action();
     test_cli_reboot_command_uses_system_reboot();
     test_cli_i2cmon_command_updates_monitor_channel();
