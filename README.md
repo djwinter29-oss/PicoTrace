@@ -1,7 +1,7 @@
 # PicoTrace
 
-PicoTrace is a low-cost protocol tracing tool built around the RP2040, currently centered on
-passive SPI transaction capture and passive I2C transaction capture.
+PicoTrace is a low-cost protocol tracing tool built around the RP2040 and RP2350 families,
+currently centered on passive SPI transaction capture and passive I2C transaction capture.
 
 The firmware uses a shared USB device model across both protocols: TinyUSB composite descriptors,
 a bounded CDC host-control path, and a vendor bulk stream for high-rate trace delivery. The host-
@@ -174,7 +174,7 @@ cmake --build build/firmware-pico2
 
 ## Scope
 
-The current scope is a practical RP2040-based protocol tracer with shared USB transport and host
-control patterns across SPI and I2C capture. Product-specific protocol decoding, richer host-side
-analysis, and hardware front-end expansion can evolve on top of that core without changing the
-basic USB ownership model.
+The current scope is a practical RP2040/RP2350-based protocol tracer with shared USB transport and
+host control patterns across SPI and I2C capture. Product-specific protocol decoding, richer
+host-side analysis, and hardware front-end expansion can evolve on top of that core without
+changing the basic USB ownership model.

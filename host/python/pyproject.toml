@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "picotrace"
 version = "0.1.0"
-description = "Minimal Python host helpers for PicoTrace USB capture"
+description = "Minimal Python host helpers for PicoTrace RP2040/RP2350 USB capture"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [

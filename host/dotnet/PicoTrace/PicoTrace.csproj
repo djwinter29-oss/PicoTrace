@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>PicoTrace</AssemblyName>
     <RootNamespace>PicoTrace</RootNamespace>
+    <Description>PicoTrace .NET host for RP2040 and RP2350 USB trace capture</Description>
   </PropertyGroup>
 
   <ItemGroup>
