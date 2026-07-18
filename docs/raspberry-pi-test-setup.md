@@ -123,6 +123,32 @@ spidev_test -D /dev/spidev0.0 -s 500000 -p "\x9A\xBC\xDE\xF0" -v
 
 This asserts `CE0` and clocks four bytes on `MOSI`.
 
+If you want a repo-local helper that does the same kind of framed transfer without relying on the
+`spidev` Python package:
+
+```bash
+python3 ./tools/linux/spi_transfer.py 01 02 03 04
+```
+
+For repeated transfers during PicoTrace capture tests:
+
+```bash
+python3 ./tools/linux/spi_transfer.py 01 02 03 04 --repeat 10 --interval-ms 250
+```
+
+For a larger fixed-pattern transfer, repeat the same base bytes until a requested transfer size is
+reached:
+
+```bash
+python3 ./tools/linux/spi_transfer.py 01 02 03 04 --total-bytes 256
+```
+
+If you omit the payload, the helper uses the default fixed pattern `00` through `FF` and repeats it:
+
+```bash
+python3 ./tools/linux/spi_transfer.py --total-bytes 256
+```
+
 If `spidev_test` is not available, a small Python example works as well:
 
 ```python
@@ -177,17 +203,17 @@ termios.tcsetattr(fd, termios.TCSANOW, attrs)
 termios.tcflush(fd, termios.TCIOFLUSH)
 
 def transact(cmd, settle=0.4, window=2.0):
-	os.write(fd, cmd)
-	time.sleep(settle)
-	out = b''
-	end = time.time() + window
-	while time.time() < end:
-		ready, _, _ = select.select([fd], [], [], 0.2)
-		if ready:
-			chunk = os.read(fd, 4096)
-			if chunk:
-				out += chunk
-	return out.decode('utf-8', 'replace').strip()
+    os.write(fd, cmd)
+    time.sleep(settle)
+    out = b''
+    end = time.time() + window
+    while time.time() < end:
+        ready, _, _ = select.select([fd], [], [], 0.2)
+        if ready:
+            chunk = os.read(fd, 4096)
+            if chunk:
+                out += chunk
+    return out.decode('utf-8', 'replace').strip()
 
 print(transact(b'version\r\n'))
 print(transact(b'stream on\r\n'))

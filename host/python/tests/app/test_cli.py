@@ -31,6 +31,15 @@ class CliTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             cli.main(["trace", "--all", "--channel", "4"])
 
+    def test_main_reports_runtime_error_without_traceback(self) -> None:
+        with mock.patch("picotrace.app.cli._stream_channel_with_hooks", side_effect=RuntimeError("Trace bulk interface is busy")), mock.patch(
+            "picotrace.app.cli._disable_stream_best_effort"
+        ), mock.patch("sys.stderr") as stderr_mock:
+            exit_code = cli.main(["trace", "--channel", "4"])
+
+        self.assertEqual(exit_code, 1)
+        stderr_mock.write.assert_any_call("Trace bulk interface is busy")
+
     def test_start_monitor_on_non_windows_uses_foreground_configured_monitor_for_configured_session(self) -> None:
         manager = cli._MonitorManager()
         configure = mock.Mock()

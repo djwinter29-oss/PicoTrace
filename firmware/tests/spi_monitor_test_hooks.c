@@ -19,6 +19,7 @@ void spi_monitor_internal_process_bus_words(
 );
 void spi_monitor_internal_poll_bus_timeout(uint32_t bus, uint32_t now_us);
 void spi_monitor_internal_set_bus_sampler_overrun_count(uint32_t bus, uint32_t overrun_count);
+bool spi_monitor_internal_test_stage_dma_progress(uint32_t bus, const uint32_t *raw_words, uint32_t raw_word_count);
 
 bool spi_monitor_test_feed_samples(
     uint32_t bus,
@@ -99,4 +100,8 @@ void spi_monitor_test_set_bus_sampler_overrun_counts(uint32_t bus, uint32_t mosi
     }
 
     spi_monitor_internal_set_bus_sampler_overrun_count(bus, mosi_overruns + miso_overruns);
+}
+
+bool spi_monitor_test_stage_dma_progress(uint32_t bus, const uint32_t *raw_words, uint32_t raw_word_count) {
+    return spi_monitor_internal_test_stage_dma_progress(bus, raw_words, raw_word_count);
 }

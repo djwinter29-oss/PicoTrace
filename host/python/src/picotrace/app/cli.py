@@ -881,16 +881,20 @@ def _build_monitor_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     argv_list = list(argv) if argv is not None else sys.argv[1:]
-    if argv_list and argv_list[0] == "_monitor":
-        parser = _build_monitor_parser()
-        args = parser.parse_args(argv_list[1:])
-        return args.func(args)
+    try:
+        if argv_list and argv_list[0] == "_monitor":
+            parser = _build_monitor_parser()
+            args = parser.parse_args(argv_list[1:])
+            return args.func(args)
 
-    parser = _build_parser()
-    args = parser.parse_args(argv_list)
-    if args.command is None:
-        return _interactive_mode()
-    return args.func(args)
+        parser = _build_parser()
+        args = parser.parse_args(argv_list)
+        if args.command is None:
+            return _interactive_mode()
+        return args.func(args)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

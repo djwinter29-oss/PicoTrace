@@ -49,6 +49,7 @@ typedef char spi_monitor_pio_programs_must_fit[
 typedef struct {
     bool packet_open; /**< Indicates whether a fixed trace packet fragment is currently open. */
     bool transaction_fragmented; /**< Indicates whether the current transaction already emitted an earlier fragment. */
+    uint32_t transaction_sequence; /**< Sequence number assigned to the current logical SPI transaction. */
     uint8_t pending_flags; /**< Flags to apply to the next opened fragment. */
     uint16_t payload_offset; /**< Number of payload bytes already staged in the open fragment. */
     trace_packet_t packet; /**< Caller-owned fixed packet fragment under construction. */
@@ -57,6 +58,7 @@ typedef struct {
 /** @brief Per-logical-channel accounting state retained across bus-owned transactions. */
 typedef struct {
     uint32_t packets_emitted; /**< Number of emitted trace packet fragments in the current session. */
+    uint32_t transactions_emitted; /**< Number of emitted logical SPI transactions in the current session. */
     uint32_t sink_overrun_count; /**< Number of fragments dropped because the shared trace ring rejected them. */
 } spi_monitor_channel_state_t;
 
@@ -226,6 +228,7 @@ static void spi_monitor_reset_channel_state(spi_monitor_channel_state_t *channel
 static void spi_monitor_packet_builder_reset(spi_monitor_packet_builder_t *builder) {
     builder->packet_open = false;
     builder->transaction_fragmented = false;
+    builder->transaction_sequence = 0u;
     builder->pending_flags = 0u;
     builder->payload_offset = 0u;
     memset(&builder->packet, 0, sizeof(builder->packet));
@@ -323,13 +326,17 @@ static void spi_monitor_packet_builder_begin(
     uint8_t logical_channel,
     uint32_t timestamp_us
 ) {
+    if (!builder->transaction_fragmented) {
+        builder->transaction_sequence = channel_state->transactions_emitted + 1u;
+    }
+
     builder->packet.header.version = TRACE_PACKET_VERSION;
     builder->packet.header.type = TRACE_TYPE_SPI;
     builder->packet.header.channel = logical_channel;
     builder->packet.header.flags = builder->pending_flags;
     builder->packet.header.payload_len = 0u;
     builder->packet.header.meta = (uint16_t)capture;
-    builder->packet.header.sequence = channel_state->packets_emitted + 1u;
+    builder->packet.header.sequence = builder->transaction_sequence;
     builder->packet.header.timestamp_us = timestamp_us;
     if (builder->transaction_fragmented) {
         builder->packet.header.flags |= TRACE_FLAG_CONTINUED;
@@ -359,14 +366,21 @@ static bool spi_monitor_packet_builder_flush(
     if (!spi_monitor_push_trace_packet(&builder->packet)) {
         channel_state->sink_overrun_count += 1u;
         spi_monitor_packet_builder_drop_open_packet(builder);
+        builder->transaction_fragmented = true;
         spi_monitor_packet_builder_mark_next(builder, TRACE_FLAG_OVERFLOW);
         return false;
     }
 
     channel_state->packets_emitted += 1u;
+    if (end_of_transaction) {
+        channel_state->transactions_emitted += 1u;
+    }
     builder->packet_open = false;
     builder->payload_offset = 0u;
     builder->transaction_fragmented = !end_of_transaction;
+    if (end_of_transaction) {
+        builder->transaction_sequence = 0u;
+    }
     memset(&builder->packet, 0, sizeof(builder->packet));
     return true;
 }
@@ -633,7 +647,6 @@ void spi_monitor_internal_process_bus_words(
         );
 
         bus_runtime->last_activity_timestamp_us = timestamp_us;
-        spi_monitor_close_bus_transaction(bus, 0u);
         return;
     }
 
@@ -675,12 +688,18 @@ static void spi_monitor_process_bus_half(
 void spi_monitor_internal_poll_bus_timeout(uint32_t bus, uint32_t now_us) {
     spi_monitor_bus_runtime_t *bus_runtime = &g_spi_monitor_bus_runtimes[bus];
     uint32_t timeout_us = g_spi_monitor_buses[bus].timeout_us;
+    int32_t elapsed_us;
 
     if (!bus_runtime->transaction_open || (timeout_us == 0u)) {
         return;
     }
 
-    if ((now_us - bus_runtime->last_activity_timestamp_us) >= timeout_us) {
+    elapsed_us = (int32_t)(now_us - bus_runtime->last_activity_timestamp_us);
+    if (elapsed_us < 0) {
+        return;
+    }
+
+    if ((uint32_t)elapsed_us >= timeout_us) {
         spi_monitor_close_bus_transaction(bus, 0u);
     }
 }
@@ -718,6 +737,25 @@ static uint32_t spi_monitor_bus_sampler_overrun_count(uint32_t bus) {
 
 void spi_monitor_internal_set_bus_sampler_overrun_count(uint32_t bus, uint32_t overrun_count) {
     g_spi_monitor_bus_samplers[bus].overrun_count = overrun_count;
+}
+
+bool spi_monitor_internal_test_stage_dma_progress(uint32_t bus, const uint32_t *raw_words, uint32_t raw_word_count) {
+    spi_monitor_bus_sampler_state_t *sampler_state;
+
+    if (!spi_monitor_internal_valid_bus(bus) || (raw_words == NULL) || (raw_word_count == 0u) || (raw_word_count > SPI_MONITOR_DMA_RING_WORDS)) {
+        return false;
+    }
+
+    sampler_state = &g_spi_monitor_bus_samplers[bus];
+    if (!sampler_state->running || (sampler_state->dma_channel < 0)) {
+        return false;
+    }
+
+    memcpy(&g_spi_monitor_bus_sampler_dma_buffers[bus][0][0], raw_words, raw_word_count * sizeof(raw_words[0]));
+    sampler_state->write_offset_words = 0u;
+    sampler_state->last_transfer_count = UINT32_MAX;
+    dma_channel_set_trans_count((uint)sampler_state->dma_channel, UINT32_MAX - raw_word_count, false);
+    return true;
 }
 
 /** @brief Stop one observed SPI bus sampler and leave its DMA ring idle. */
@@ -805,46 +843,47 @@ static void spi_monitor_stop_bus(uint32_t bus) {
     spi_monitor_reset_bus_runtime(&g_spi_monitor_bus_runtimes[bus]);
 }
 
-/** @brief Consume one completed DMA half-buffer from one observed bus sampler. */
-static void spi_monitor_consume_bus_sampler_half(uint32_t sampler, uint32_t half_index) {
+/** @brief Consume one contiguous range of completed DMA words from one observed bus sampler. */
+static void spi_monitor_consume_bus_sampler_words(uint32_t sampler, uint32_t word_offset, uint32_t word_count) {
     spi_monitor_bus_sampler_state_t *sampler_state = &g_spi_monitor_bus_samplers[sampler];
+    const uint32_t *raw_words = &g_spi_monitor_bus_sampler_dma_buffers[sampler][0][0] + word_offset;
+
+    if (word_count == 0u) {
+        return;
+    }
 
     /* ponytail: CS_N is sampled once per completed DMA half-buffer instead of per raw SPI bit.
-        * That keeps the current clock-gated data-only sampler and one-sampler-per-bus DMA layout intact, and it
-     * is acceptable for the current monitor model because a controller usually leaves a clock gap
-     * when CS_N changes and starts the next transaction after that boundary. If later hardware
-     * proves to switch CS_N mid-burst without a usable clock gap, upgrade the raw sampler to carry
-     * CS bits in the DMA stream and decode those historical CS transitions directly.
+     * That keeps the current clock-gated data-only sampler and one-sampler-per-bus DMA layout
+     * intact, and it is acceptable for the current monitor model because a controller usually
+     * leaves a clock gap when CS_N changes and starts the next transaction after that boundary.
+     * If later hardware proves to switch CS_N mid-burst without a usable clock gap, upgrade the
+     * raw sampler to carry CS bits in the DMA stream and decode those historical CS transitions
+     * directly.
      */
-    spi_monitor_process_bus_half(
+    spi_monitor_internal_process_bus_words(
         sampler_state->bus,
-        half_index,
         spi_monitor_sample_active_cs_mask(sampler_state->bus),
         spi_monitor_timestamp_us(),
-        SPI_MONITOR_DMA_BUFFER_WORDS
+        raw_words,
+        word_count
     );
 }
 
-/** @brief Mark one half-buffer complete for one observed bus sampler. */
-static void spi_monitor_mark_bus_sampler_half_complete(uint32_t sampler, uint32_t half_index) {
-    spi_monitor_consume_bus_sampler_half(sampler, half_index);
-}
-
 /** @brief Service DMA progress for one running observed bus sampler. */
-static void spi_monitor_poll_bus_sampler(uint32_t sampler) {
+static bool spi_monitor_poll_bus_sampler(uint32_t sampler) {
     spi_monitor_bus_sampler_state_t *sampler_state = &g_spi_monitor_bus_samplers[sampler];
     uint32_t transfer_count;
     uint32_t words_written;
     uint32_t offset;
 
     if (!sampler_state->running) {
-        return;
+        return false;
     }
 
     transfer_count = dma_channel_hw_addr((uint)sampler_state->dma_channel)->transfer_count;
     words_written = sampler_state->last_transfer_count - transfer_count;
     if (words_written == 0u) {
-        return;
+        return false;
     }
 
     sampler_state->last_transfer_count = transfer_count;
@@ -854,20 +893,16 @@ static void spi_monitor_poll_bus_sampler(uint32_t sampler) {
     }
     offset = sampler_state->write_offset_words;
     while (words_written != 0u) {
-        uint32_t words_until_boundary = SPI_MONITOR_DMA_BUFFER_WORDS - (offset % SPI_MONITOR_DMA_BUFFER_WORDS);
+        uint32_t words_until_wrap = SPI_MONITOR_DMA_RING_WORDS - offset;
+        uint32_t chunk_words = (words_written < words_until_wrap) ? words_written : words_until_wrap;
 
-        if (words_written < words_until_boundary) {
-            offset = (offset + words_written) % SPI_MONITOR_DMA_RING_WORDS;
-            words_written = 0u;
-            break;
-        }
-
-        words_written -= words_until_boundary;
-        spi_monitor_mark_bus_sampler_half_complete(sampler, offset / SPI_MONITOR_DMA_BUFFER_WORDS);
-        offset = (offset + words_until_boundary) % SPI_MONITOR_DMA_RING_WORDS;
+        spi_monitor_consume_bus_sampler_words(sampler, offset, chunk_words);
+        offset = (offset + chunk_words) % SPI_MONITOR_DMA_RING_WORDS;
+        words_written -= chunk_words;
     }
 
     sampler_state->write_offset_words = offset;
+    return true;
 }
 
 /** @brief Clear the shared bus state back to the stopped session state. */
@@ -882,6 +917,7 @@ static void spi_monitor_reset_bus_state(spi_monitor_bus_state_t *bus_state) {
 /** @brief Clear one logical SPI channel back to the stopped session state. */
 static void spi_monitor_reset_channel_state(spi_monitor_channel_state_t *channel_state) {
     channel_state->packets_emitted = 0u;
+    channel_state->transactions_emitted = 0u;
     channel_state->sink_overrun_count = 0u;
 }
 
@@ -984,7 +1020,6 @@ bool spi_monitor_needs_poll(void) {
 
 /** @copydoc spi_monitor_poll */
 void spi_monitor_poll(void) {
-    uint32_t now_us = spi_monitor_timestamp_us();
     bool stream_enabled = spi_monitor_internal_stream_enabled();
 
     if (!stream_enabled) {
@@ -998,9 +1033,10 @@ void spi_monitor_poll(void) {
     }
 
     for (uint32_t sampler = 0u; sampler < SPI_MONITOR_BUS_SAMPLER_COUNT; ++sampler) {
-        spi_monitor_poll_bus_sampler(sampler);
+        (void)spi_monitor_poll_bus_sampler(sampler);
     }
 
+    uint32_t now_us = spi_monitor_timestamp_us();
     for (uint32_t bus = 0u; bus < SPI_MONITOR_BUS_COUNT; ++bus) {
         spi_monitor_internal_poll_bus_timeout(bus, now_us);
     }

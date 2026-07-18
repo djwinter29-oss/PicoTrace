@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "hardware/dma.h"
+#include "hardware/gpio.h"
 #include "tusb.h"
 
 #include "app_control.h"
@@ -60,6 +62,7 @@ static uint32_t stub_spi_packets_emitted[6];
 static uint32_t stub_spi_overrun_count[6];
 static bool stub_spi_running[6];
 static spi_monitor_rc_t stub_spi_monitor_result = SPI_MONITOR_RC_OK;
+uint64_t stub_gpio_high_mask = UINT64_MAX;
 bool stub_dma_configure_fail_next;
 
 static trace_packet_t make_test_trace_packet(uint8_t sequence_seed);
@@ -395,6 +398,7 @@ static void reset_real_spi_monitor_state(void) {
     spi_monitor_bus_config_t config = {0};
 
     stub_time_us32 = 0u;
+    stub_gpio_high_mask = UINT64_MAX;
     stub_dma_configure_fail_next = false;
     app_control_set_stream_enabled(true);
     (void)spi_monitor_init();
@@ -768,7 +772,7 @@ static void test_spi_monitor_open_transaction_does_not_count_packet_before_ring_
     assert(status[0].packets_emitted == 1u);
 }
 
-/** @brief Verify that an idle CS handoff flushes buffered data instead of dropping the completed half-buffer. */
+/** @brief Verify that an idle CS handoff preserves buffered data until timeout closes the transaction. */
 static void test_spi_monitor_idle_cs_handoff_flushes_completed_buffer(void) {
     spi_monitor_bus_config_t config = {0};
     trace_packet_t packet = {0};
@@ -787,12 +791,52 @@ static void test_spi_monitor_idle_cs_handoff_flushes_completed_buffer(void) {
     raw_words[0] = pack_spi_byte_word(0x34u, 0x00u);
     assert(spi_monitor_test_feed_samples(0u, 0x00u, 200u, raw_words, 1u) == true);
 
+    assert(trace_ring_available() == 0u);
+
+    spi_monitor_test_poll_timeout(0u, 1500u);
+
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
     assert((packet.header.flags & TRACE_FLAG_END) != 0u);
     assert(packet.header.payload_len == 2u);
     assert(packet.payload[0] == 0x12u);
     assert(packet.payload[1] == 0x34u);
+}
+
+/** @brief Verify that poll-driven DMA progress emits a short SPI transfer without waiting for a full half-buffer. */
+static void test_spi_monitor_poll_flushes_short_dma_progress(void) {
+    spi_monitor_bus_config_t config = {0};
+    trace_packet_t packet = {0};
+    uint32_t raw_words[1];
+
+    reset_real_spi_monitor_state();
+    trace_ring_init();
+    config.capture = SPI_MONITOR_CAPTURE_MOSI;
+    config.spi_mode = 0u;
+    config.channel_select_mask = 0x01u;
+    config.timeout_us = 1000u;
+
+    assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
+    raw_words[0] = pack_spi_byte_word(0x9Au, 0x00u);
+    assert(spi_monitor_test_stage_dma_progress(0u, raw_words, 1u) == true);
+
+    stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, false);
+    stub_time_us32 = 100u;
+    spi_monitor_poll();
+
+    assert(trace_ring_available() == 0u);
+
+    stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, true);
+    stub_time_us32 = 1200u;
+    spi_monitor_poll();
+
+    assert(trace_ring_available() == 1u);
+    assert(trace_ring_pop_copy(&packet) == true);
+    assert(packet.header.type == TRACE_TYPE_SPI);
+    assert(packet.header.channel == SPI_MONITOR_CH0_LOGICAL_CHANNEL);
+    assert((packet.header.flags & TRACE_FLAG_END) != 0u);
+    assert(packet.header.payload_len == 1u);
+    assert(packet.payload[0] == 0x9Au);
 }
 
 /** @brief Verify that sampler overruns are reported at bus scope, not duplicated onto channels. */
@@ -849,6 +893,37 @@ static void test_spi_monitor_poll_timeout_refreshes_channel_overrun_status(void)
     assert(status[0].overrun_count == 1u);
 }
 
+/** @brief Verify that timeout polling ignores stale timestamps older than the most recent SPI activity. */
+static void test_spi_monitor_poll_timeout_ignores_stale_now_snapshot(void) {
+    spi_monitor_bus_config_t config = {0};
+    trace_packet_t packet = {0};
+    uint32_t raw_words[1];
+
+    reset_real_spi_monitor_state();
+    trace_ring_init();
+    config.capture = SPI_MONITOR_CAPTURE_MOSI;
+    config.spi_mode = 0u;
+    config.channel_select_mask = 0x01u;
+    config.timeout_us = 1000u;
+    raw_words[0] = pack_spi_byte_word(0x6Au, 0x00u);
+
+    assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
+    assert(spi_monitor_test_feed_samples(0u, 0x01u, 100u, raw_words, 1u) == true);
+
+    spi_monitor_test_poll_timeout(0u, 90u);
+
+    assert(trace_ring_available() == 0u);
+
+    spi_monitor_test_poll_timeout(0u, 1200u);
+
+    assert(trace_ring_available() == 1u);
+    assert(trace_ring_pop_copy(&packet) == true);
+    assert((packet.header.flags & TRACE_FLAG_END) != 0u);
+    assert(packet.header.sequence == 1u);
+    assert(packet.header.payload_len == 1u);
+    assert(packet.payload[0] == 0x6Au);
+}
+
 /** @brief Verify that a fragment emitted after mid-transaction overflow still carries CONTINUED. */
 static void test_spi_monitor_overflow_preserves_continued_for_same_transaction(void) {
     spi_monitor_bus_config_t config = {0};
@@ -900,6 +975,7 @@ static void test_spi_monitor_overflow_preserves_continued_for_same_transaction(v
     assert((packet.header.flags & TRACE_FLAG_OVERFLOW) != 0u);
     assert((packet.header.flags & TRACE_FLAG_CONTINUED) != 0u);
     assert((packet.header.flags & TRACE_FLAG_END) != 0u);
+    assert(packet.header.sequence == 1u);
     assert(packet.header.payload_len == 3u);
     assert(packet.payload[0] == expected_retry_byte);
     assert(packet.payload[1] == 0xE1u);
@@ -1772,8 +1848,10 @@ int main(void) {
     test_spi_monitor_invalid_reconfig_does_not_flush_transaction();
     test_spi_monitor_open_transaction_does_not_count_packet_before_ring_push();
     test_spi_monitor_idle_cs_handoff_flushes_completed_buffer();
+    test_spi_monitor_poll_flushes_short_dma_progress();
     test_spi_monitor_directional_overruns_are_aggregated_in_status();
     test_spi_monitor_poll_timeout_refreshes_channel_overrun_status();
+    test_spi_monitor_poll_timeout_ignores_stale_now_snapshot();
     test_spi_monitor_overflow_preserves_continued_for_same_transaction();
     test_cli_unknown_command_writes_fixed_helper();
     test_cli_help_writes_response_without_connected_flag();
