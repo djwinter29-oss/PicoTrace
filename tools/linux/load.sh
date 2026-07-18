@@ -83,9 +83,51 @@ fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
+linux_env_file="${script_dir}/.env.sh"
 elf_path="${repo_root}/${firmware_build_dir}/picotrace.elf"
 
+if [[ -f "${linux_env_file}" ]]; then
+    # shellcheck disable=SC1090
+    source "${linux_env_file}"
+fi
+
 cd "${repo_root}"
+
+run_openocd() {
+    local openocd_log
+    openocd_log="$(mktemp)"
+    local openocd_command=(
+        "${openocd_exe}"
+        -f interface/cmsis-dap.cfg
+        -f "${openocd_target}"
+        -c "adapter speed ${adapter_speed_khz}"
+        -c "program ${elf_path} verify reset exit"
+    )
+
+    if "${openocd_command[@]}" >"${openocd_log}" 2>&1; then
+        cat "${openocd_log}"
+        rm -f "${openocd_log}"
+        return 0
+    fi
+
+    cat "${openocd_log}"
+
+    if grep -q 'Access denied (insufficient permissions)' "${openocd_log}" && command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+        printf 'Retrying OpenOCD with sudo because the Debug Probe USB device is not writable by the current user.\n' >&2
+        if sudo -n "${openocd_command[@]}"; then
+            rm -f "${openocd_log}"
+            return 0
+        fi
+    fi
+
+    if grep -q 'ADIv6 requires DPv3' "${openocd_log}"; then
+        printf 'OpenOCD can open the Debug Probe, but the Pico 2 target is not answering as a DPv3 RP2350.\n' >&2
+        printf 'Check that the target board is powered, the SWD wires and ground are correct, and the probe firmware is current.\n' >&2
+    fi
+
+    rm -f "${openocd_log}"
+    return 1
+}
 
 if [[ "${skip_build}" -eq 0 ]]; then
     cmake -S firmware -B "${firmware_build_dir}" -DPICO_BOARD="${board}"
@@ -102,10 +144,6 @@ if [[ ! -f "${elf_path}" ]]; then
     exit 1
 fi
 
-"${openocd_exe}" \
-    -f interface/cmsis-dap.cfg \
-    -f "${openocd_target}" \
-    -c "adapter speed ${adapter_speed_khz}" \
-    -c "program ${elf_path} verify reset exit"
+run_openocd
 
 printf 'Programmed %s over Debug Probe\n' "${elf_path}"

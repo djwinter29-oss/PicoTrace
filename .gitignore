@@ -78,3 +78,6 @@ TestResults/
 
 # Local Windows script configuration
 tools/windows/.env.ps1
+
+# Local Linux script configuration
+tools/linux/.env.sh

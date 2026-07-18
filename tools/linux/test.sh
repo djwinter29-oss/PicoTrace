@@ -6,6 +6,12 @@ test_build_dir="${2:-build/tests}"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
+linux_env_file="${script_dir}/.env.sh"
+
+if [[ -f "${linux_env_file}" ]]; then
+	# shellcheck disable=SC1090
+	source "${linux_env_file}"
+fi
 
 cd "${repo_root}"
 

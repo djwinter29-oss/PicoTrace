@@ -63,7 +63,26 @@ with reliable streaming plus low-rate host control.
 Firmware builds require the Raspberry Pi Pico SDK.
 
 - Windows: set `PICO_SDK_PATH` in your shell or in `tools/windows/.env.ps1`, or place the SDK at `C:\src\pico-sdk` to use the script's default lookup.
-- Linux: export `PICO_SDK_PATH` before running the firmware build or load scripts.
+- Linux: run `./tools/linux/setup_env.sh` (recommended) or export `PICO_SDK_PATH` manually.
+
+Quick setup scripts are provided for both platforms:
+
+```powershell
+.\tools\windows\setup_env.ps1
+```
+
+```bash
+./tools/linux/setup_env.sh
+```
+
+These scripts clone or reuse the Pico SDK, initialize SDK submodules, and create a local script config file:
+
+- Windows: `tools/windows/.env.ps1`
+- Linux: `tools/linux/.env.sh`
+
+Linux build/load/test scripts auto-source `tools/linux/.env.sh` when present.
+
+On Linux, the setup script also installs a udev rule for the Raspberry Pi Debug Probe so OpenOCD can access it without root.
 
 Programming through the load scripts also requires OpenOCD. The Linux load script expects `openocd` on `PATH` by default, and both Windows and Linux let you override the target config when needed.
 
