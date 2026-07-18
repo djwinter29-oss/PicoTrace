@@ -129,6 +129,95 @@ run_openocd() {
     return 1
 }
 
+best_effort_picotrace_reboot() {
+    python3 - <<'PY' || true
+import glob
+import errno
+import os
+import select
+import termios
+import time
+
+PORT_GLOB = '/dev/serial/by-id/usb-PicoTrace_*if00'
+
+def find_port(timeout_s):
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        matches = glob.glob(PORT_GLOB)
+        if matches:
+            return matches[0]
+        time.sleep(0.1)
+    return None
+
+def open_port(path, timeout_s):
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            fd = os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+            attrs = termios.tcgetattr(fd)
+            attrs[0] = 0
+            attrs[1] = 0
+            attrs[3] = 0
+            attrs[2] = attrs[2] | termios.CREAD | termios.CLOCAL
+            attrs[6][termios.VMIN] = 0
+            attrs[6][termios.VTIME] = 1
+            termios.tcsetattr(fd, termios.TCSANOW, attrs)
+            termios.tcflush(fd, termios.TCIOFLUSH)
+            return fd
+        except OSError:
+            time.sleep(0.1)
+    return None
+
+def wait_for_disconnect(path, timeout_s):
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if not os.path.exists(path):
+            return True
+        time.sleep(0.1)
+    return False
+
+port = find_port(8.0)
+if port is None:
+    raise SystemExit(0)
+
+reboot_requested = False
+attempt_deadline = time.time() + 8.0
+while time.time() < attempt_deadline:
+    fd = open_port(port, 1.5)
+    if fd is None:
+        time.sleep(0.1)
+        continue
+
+    try:
+        time.sleep(0.3)
+        try:
+            os.write(fd, b'reboot\r\n')
+            reboot_requested = True
+        except OSError as exc:
+            if exc.errno not in (errno.EIO, errno.ENODEV, errno.ENOENT, errno.ENXIO):
+                raise
+
+        end = time.time() + 0.5
+        while time.time() < end:
+            ready, _, _ = select.select([fd], [], [], 0.1)
+            if ready:
+                try:
+                    os.read(fd, 4096)
+                except OSError as exc:
+                    if exc.errno in (errno.EIO, errno.ENODEV, errno.ENOENT, errno.ENXIO):
+                        break
+                    raise
+    finally:
+        os.close(fd)
+
+    if reboot_requested and wait_for_disconnect(port, 2.0):
+        find_port(8.0)
+        break
+
+    time.sleep(0.2)
+PY
+}
+
 if [[ "${skip_build}" -eq 0 ]]; then
     cmake -S firmware -B "${firmware_build_dir}" -DPICO_BOARD="${board}"
     cmake --build "${firmware_build_dir}"
@@ -145,5 +234,6 @@ if [[ ! -f "${elf_path}" ]]; then
 fi
 
 run_openocd
+best_effort_picotrace_reboot
 
 printf 'Programmed %s over Debug Probe\n' "${elf_path}"

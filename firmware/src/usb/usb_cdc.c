@@ -14,9 +14,9 @@
 /** @brief Maximum bytes read per TinyUSB CDC receive callback chunk. */
 #define USB_CDC_PACKET_SIZE 64u
 /** @brief Local receive queue capacity in bytes. */
-#define USB_CDC_RX_QUEUE_SIZE 128u
+#define USB_CDC_RX_QUEUE_SIZE 512u
 /** @brief Local transmit queue capacity in bytes. */
-#define USB_CDC_TX_QUEUE_SIZE 256u
+#define USB_CDC_TX_QUEUE_SIZE 1024u
 
 /** @brief Circular receive queue storage. */
 static uint8_t usb_cdc_rx_queue[USB_CDC_RX_QUEUE_SIZE];
@@ -100,7 +100,11 @@ bool usb_cdc_write(const uint8_t *data, uint32_t length) {
     }
 
     if (!usb_cdc_tx_queue_push(data, length)) {
-        return false;
+        /* Try one immediate flush pass before giving up when bursts momentarily fill the queue. */
+        usb_cdc_poll_tx();
+        if (!usb_cdc_tx_queue_push(data, length)) {
+            return false;
+        }
     }
 
     usb_cdc_poll_tx();

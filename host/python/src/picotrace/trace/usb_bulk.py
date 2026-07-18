@@ -120,8 +120,17 @@ def open_trace_device(
         except (NotImplementedError, usb.core.USBError):
             pass
 
-    usb.util.claim_interface(device, interface_number)
-    device.set_interface_altsetting(interface=interface_number, alternate_setting=alternate_setting)
+    try:
+        usb.util.claim_interface(device, interface_number)
+    except usb.core.USBError as exc:
+        error_text = str(exc).lower()
+        if exc.errno == 16 or "busy" in error_text:
+            raise RuntimeError(
+                "Trace bulk interface is busy. Stop any other running 'picotrace ... trace' process and retry."
+            ) from exc
+        raise
+    if alternate_setting != 0:
+        device.set_interface_altsetting(interface=interface_number, alternate_setting=alternate_setting)
     return device, interface_number
 
 

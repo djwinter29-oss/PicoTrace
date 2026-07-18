@@ -46,6 +46,9 @@ typedef struct {
  */
 i2c_monitor_rc_t i2c_monitor_init(void);
 
+/** @brief Return whether the producer core currently has I2C monitor work to service. */
+bool i2c_monitor_needs_poll(void);
+
 /**
  * @brief Service completed raw sample buffers on the producer core.
  *

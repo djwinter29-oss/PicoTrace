@@ -131,10 +131,23 @@ static uint32_t g_spi_monitor_program_offsets[SPI_MONITOR_BUS_SAMPLER_COUNT][SPI
 static bool g_spi_monitor_initialized;
 /** @brief Sticky failure flag preventing repeated partial initialization attempts. */
 static bool g_spi_monitor_init_failed;
+/** @brief Bit mask of observed SPI buses that currently need producer-core polling. */
+static uint8_t g_spi_monitor_poll_bus_mask;
 
 /** @brief Return a coarse producer-side timestamp for newly opened SPI packet fragments. */
 static uint32_t spi_monitor_timestamp_us(void) {
     return time_us_32();
+}
+
+static void spi_monitor_set_poll_interest(uint32_t bus, bool poll_needed) {
+    uint8_t bus_mask = (uint8_t)(1u << bus);
+
+    if (poll_needed) {
+        g_spi_monitor_poll_bus_mask = (uint8_t)(g_spi_monitor_poll_bus_mask | bus_mask);
+        return;
+    }
+
+    g_spi_monitor_poll_bus_mask = (uint8_t)(g_spi_monitor_poll_bus_mask & (uint8_t)~bus_mask);
 }
 
 /** @brief Return whether the shared trace ring accepted one completed SPI packet fragment. */
@@ -718,6 +731,7 @@ static void spi_monitor_stop_bus_sampler(uint32_t sampler) {
     pio_sm_set_enabled(spi_monitor_pio, sampler_state->sm, false);
     pio_sm_clear_fifos(spi_monitor_pio, sampler_state->sm);
     spi_monitor_reset_bus_sampler_state(sampler_state);
+    spi_monitor_set_poll_interest(sampler_state->bus, false);
 }
 
 /** @brief Start one observed SPI bus sampler with a continuous DMA ping-pong ring. */
@@ -766,6 +780,7 @@ static bool spi_monitor_start_bus_sampler(uint32_t sampler, uint8_t spi_mode) {
     sampler_state->write_offset_words = 0u;
     sampler_state->last_transfer_count = UINT32_MAX;
     sampler_state->overrun_count = 0u;
+    spi_monitor_set_poll_interest(sampler_state->bus, true);
     return true;
 }
 
@@ -958,8 +973,13 @@ spi_monitor_rc_t spi_monitor_init(void) {
             g_spi_monitor_program_offsets[sampler][spi_mode] = pio_add_program(spi_monitor_pio, &g_spi_monitor_programs[sampler][spi_mode]);
         }
     }
+    g_spi_monitor_poll_bus_mask = 0u;
     g_spi_monitor_initialized = true;
     return SPI_MONITOR_RC_OK;
+}
+
+bool spi_monitor_needs_poll(void) {
+    return g_spi_monitor_initialized && !g_spi_monitor_init_failed && (g_spi_monitor_poll_bus_mask != 0u);
 }
 
 /** @copydoc spi_monitor_poll */

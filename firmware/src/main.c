@@ -22,8 +22,7 @@
 #include "usb/usb_cdc.h"
 #include "usb/usb_hid.h"
 
-#define STREAM_SERVICE_PASSES 4u
-#define STREAM_CONTROL_POLL_DIVIDER 8u
+#define STREAM_SERVICE_PASSES 2u
 
 /** @brief Bridge the CLI shell read callback onto the USB CDC transport. */
 static uint32_t bridge_cli_read(void *context, uint8_t *data, uint32_t capacity) {
@@ -74,8 +73,15 @@ static void trace_producer_core1_main(void) {
     while (true) {
         i2c_monitor_control_poll();
         spi_monitor_control_poll();
-        i2c_monitor_poll();
-        spi_monitor_poll();
+
+        if (i2c_monitor_needs_poll()) {
+            i2c_monitor_poll();
+        }
+
+        if (spi_monitor_needs_poll()) {
+            spi_monitor_poll();
+        }
+
         tight_loop_contents();
     }
 }
@@ -85,8 +91,6 @@ static void trace_producer_core1_main(void) {
  * @return `0` is never returned during normal operation; `1` indicates producer-core init failure.
  */
 int main(void) {
-    uint32_t control_poll_divider = 0u;
-
     system_init_clock();
 
     board_init();
@@ -98,6 +102,7 @@ int main(void) {
     tusb_init();
     device_cli_init(&bridge_device_cli_transport);
 
+    multicore_reset_core1();
     multicore_launch_core1(trace_producer_core1_main);
     if (multicore_fifo_pop_blocking() == 0u) {
         return 1;
@@ -105,19 +110,24 @@ int main(void) {
 
     while (true) {
         tud_task();
+
+        /* Service control paths before bulk streaming so CLI commands are responsive under load. */
+        device_cli_poll();
+        usb_cdc_poll_tx();
+        usb_hid_poll();
+
         if (tud_ready()) {
             for (uint32_t pass = 0u; pass < STREAM_SERVICE_PASSES; ++pass) {
                 usb_bulk_poll_stream(app_control_stream_enabled());
                 usb_bulk_flush();
+
+                /* Interleave control-path flushing with stream writes to avoid CDC starvation. */
+                usb_cdc_poll_tx();
+                usb_hid_poll();
             }
         }
 
-        if (++control_poll_divider >= STREAM_CONTROL_POLL_DIVIDER) {
-            control_poll_divider = 0u;
-            device_cli_poll();
-            usb_cdc_poll_tx();
-            usb_hid_poll();
-        }
+        usb_cdc_poll_tx();
 
         tight_loop_contents();
     }

@@ -17,7 +17,7 @@ This setup assumes:
 
 This bench example uses:
 
-- PicoTrace I2C channel `0x06`
+- PicoTrace I2C channel `0`
 - PicoTrace SPI channel `0x00`
 
 ## Host, Debug, And Console Links
@@ -40,11 +40,11 @@ PicoTrace allocation.
 
 | Raspberry Pi Signal | Raspberry Pi Header Pin | PicoTrace GPIO | PicoTrace Signal | `channel_id` |
 | --- | --- | --- | --- | --- |
-| `I2C1_SDA` | pin `3` | `GPIO16` | `I2C0_SDA` | `0x06` |
-| `I2C1_SCL` | pin `5` | `GPIO17` | `I2C0_SCL` | `0x06` |
+| `I2C1_SDA` | pin `3` | `GPIO16` | `I2C0_SDA` | `0` |
+| `I2C1_SCL` | pin `5` | `GPIO17` | `I2C0_SCL` | `0` |
 | Ground | any ground pin | Ground | Ground | n/a |
 
-This maps the Raspberry Pi primary I2C bus onto PicoTrace logical I2C channel `0x06`.
+This maps the Raspberry Pi primary I2C bus onto PicoTrace logical I2C channel `0`.
 
 ### SPI Wiring
 
@@ -144,6 +144,54 @@ case, `MISO` data may be undefined because no target is driving the return line.
 
 Use this setup when you want a simple repeatable bench arrangement to validate:
 
-- passive I2C observation on channel `0x06`
+- passive I2C observation on channel `0`
 - passive SPI observation on channel `0x00`
 - USB transport, firmware bring-up, and physical wiring at the same time
+
+## Flash And Immediate Bring-Up
+
+On Linux, `./tools/linux/load.sh` programs the firmware over the Debug Probe and then sends a
+best-effort CDC `reboot` before returning. The script also waits for the CDC device to disappear
+and re-enumerate, so you can normally start using the CLI immediately after the command exits.
+
+Typical quick bring-up on this bench is:
+
+```bash
+./tools/linux/load.sh
+```
+
+```bash
+python3 - <<'PY'
+import glob, os, select, termios, time
+
+port = glob.glob('/dev/serial/by-id/usb-PicoTrace_*if00')[0]
+fd = os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+attrs = termios.tcgetattr(fd)
+attrs[0] = 0
+attrs[1] = 0
+attrs[3] = 0
+attrs[2] = attrs[2] | termios.CREAD | termios.CLOCAL
+attrs[6][termios.VMIN] = 0
+attrs[6][termios.VTIME] = 1
+termios.tcsetattr(fd, termios.TCSANOW, attrs)
+termios.tcflush(fd, termios.TCIOFLUSH)
+
+def transact(cmd, settle=0.4, window=2.0):
+	os.write(fd, cmd)
+	time.sleep(settle)
+	out = b''
+	end = time.time() + window
+	while time.time() < end:
+		ready, _, _ = select.select([fd], [], [], 0.2)
+		if ready:
+			chunk = os.read(fd, 4096)
+			if chunk:
+				out += chunk
+	return out.decode('utf-8', 'replace').strip()
+
+print(transact(b'version\r\n'))
+print(transact(b'stream on\r\n'))
+print(transact(b'i2cmon 0 400000\r\n'))
+os.close(fd)
+PY
+```

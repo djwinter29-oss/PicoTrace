@@ -16,6 +16,8 @@
 #define USB_VENDOR_ITF 0u
 /** @brief Vendor endpoint packet size used when streaming trace data. */
 #define USB_VENDOR_PACKET_SIZE 64u
+/** @brief Upper bound on vendor write attempts per service pass to keep control paths responsive. */
+#define USB_VENDOR_STREAM_WRITE_BUDGET 8u
 
 /** @brief Borrowed pointer to the trace packet currently being streamed. */
 static const trace_packet_t *usb_stream_packet;
@@ -30,7 +32,9 @@ static void usb_bulk_reset_stream_state(void) {
 
 /** @brief Pull packets from the trace ring and stream them over the vendor endpoint. */
 static void usb_bulk_poll_trace_ring(void) {
-    while (true) {
+    uint32_t writes_remaining = USB_VENDOR_STREAM_WRITE_BUDGET;
+
+    while (writes_remaining > 0u) {
         uint32_t packet_bytes;
         uint32_t remaining;
         uint32_t written;
@@ -59,6 +63,7 @@ static void usb_bulk_poll_trace_ring(void) {
             break;
         }
 
+        writes_remaining -= 1u;
         usb_stream_packet_offset += written;
         if (usb_stream_packet_offset >= packet_bytes) {
             trace_ring_pop();

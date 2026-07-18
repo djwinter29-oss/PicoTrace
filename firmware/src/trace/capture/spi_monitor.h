@@ -71,6 +71,9 @@ typedef struct {
  */
 spi_monitor_rc_t spi_monitor_init(void);
 
+/** @brief Return whether the producer core currently has SPI monitor work to service. */
+bool spi_monitor_needs_poll(void);
+
 /**
  * @brief Service SPI monitor background work on the producer core.
  *

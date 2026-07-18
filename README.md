@@ -100,6 +100,12 @@ Default Pico build and load commands:
 ./tools/linux/load.sh
 ```
 
+On Linux, `./tools/linux/load.sh` now performs a best-effort CDC `reboot` after SWD programming and
+waits for the USB CDC device to disconnect and re-enumerate before returning. This leaves the board
+in the same post-reboot runtime state that was validated for multicore monitor control, so CDC
+commands such as `version`, `stream on`, and `i2cmon status 0` should work immediately after the
+script exits.
+
 If you want to pass the board explicitly for Raspberry Pi Pico:
 
 ```powershell
