@@ -332,6 +332,41 @@ class CliTests(unittest.TestCase):
         configure.assert_called_once_with()
         stop.assert_called_once_with()
 
+    def test_configure_spi_bus_sessions_enables_stream_before_reconfiguring_bus(self) -> None:
+        control = mock.Mock()
+        control_context = mock.MagicMock()
+        control_context.__enter__.return_value = control
+        control_context.__exit__.return_value = None
+        shared_config = cli._SpiMonitorConfig(capture=cli.SpiCaptureMode.MOSI, spi_mode=0, timeout_us=20000)
+        sessions = [
+            cli._MonitorSession(process=None, label="spi logical channel 0", channel=0, spi_config=shared_config),
+            cli._MonitorSession(process=None, label="spi logical channel 1", channel=1, spi_config=shared_config),
+        ]
+
+        with mock.patch("picotrace.app.cli.HidControlClient.open", return_value=control_context):
+            cli._configure_spi_bus_sessions(sessions)
+
+        control.set_stream_enabled.assert_called_once_with(True)
+        control.spi_set_config.assert_called_once_with(
+            0,
+            capture=cli.SpiCaptureMode.MOSI,
+            spi_mode=0,
+            channel_select_mask=0x03,
+            timeout_us=20000,
+        )
+        self.assertLess(
+            control.mock_calls.index(mock.call.set_stream_enabled(True)),
+            control.mock_calls.index(
+                mock.call.spi_set_config(
+                    0,
+                    capture=cli.SpiCaptureMode.MOSI,
+                    spi_mode=0,
+                    channel_select_mask=0x03,
+                    timeout_us=20000,
+                )
+            ),
+        )
+
     def test_run_foreground_configured_monitor_ignores_stop_failure_after_stream_returns(self) -> None:
         configure = mock.Mock()
         stop = mock.Mock(side_effect=RuntimeError("stop failed"))

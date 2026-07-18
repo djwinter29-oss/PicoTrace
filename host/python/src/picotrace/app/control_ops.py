@@ -64,8 +64,8 @@ def _stop_spi_logical_channel(logical_channel: int) -> None:
 
 def _configure_i2c_channel(channel: int, sample_hz: int) -> None:
     def action(control: HidControlClient) -> None:
-        control.i2c_set_rate(channel, sample_hz)
         control.set_stream_enabled(True)
+        control.i2c_set_rate(channel, sample_hz)
 
     _with_control(action)
 
@@ -87,6 +87,7 @@ def _configure_spi_channel(
     channel_select_mask = 1 << slot
 
     def action(control: HidControlClient) -> None:
+        control.set_stream_enabled(True)
         control.spi_set_config(
             bus,
             capture=capture,
@@ -94,7 +95,6 @@ def _configure_spi_channel(
             channel_select_mask=channel_select_mask,
             timeout_us=timeout_us,
         )
-        control.set_stream_enabled(True)
 
     _with_control(action)
     return bus, channel_select_mask

@@ -475,6 +475,7 @@ def _configure_spi_bus_sessions(sessions: Sequence[_MonitorSession]) -> None:
         channel_select_mask |= _spi_channel_select_mask(session.channel)
 
     with HidControlClient.open() as control:
+        control.set_stream_enabled(True)
         control.spi_set_config(
             bus,
             capture=shared_config.capture,
@@ -482,7 +483,6 @@ def _configure_spi_bus_sessions(sessions: Sequence[_MonitorSession]) -> None:
             channel_select_mask=channel_select_mask,
             timeout_us=shared_config.timeout_us,
         )
-        control.set_stream_enabled(True)
 
 
 def _stop_monitor_best_effort(stop_config: _MonitorStopConfig | None) -> None:

@@ -17,7 +17,7 @@
 /** @brief Vendor endpoint packet size used when streaming trace data. */
 #define USB_VENDOR_PACKET_SIZE 64u
 /** @brief Upper bound on vendor write attempts per service pass to keep control paths responsive. */
-#define USB_VENDOR_STREAM_WRITE_BUDGET 8u
+#define USB_VENDOR_STREAM_WRITE_BUDGET 16u
 
 /** @brief Borrowed pointer to the trace packet currently being streamed. */
 static const trace_packet_t *usb_stream_packet;

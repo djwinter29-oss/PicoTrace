@@ -6,6 +6,7 @@ import unittest
 from picotrace.trace.decode import (
     I2cEventType,
     SpiCaptureMode,
+    TRACE_PACKET_PAYLOAD_BYTES,
     TraceDecodeError,
     TraceFlags,
     TraceStreamDecoder,
@@ -130,7 +131,7 @@ class TraceDecodeTests(unittest.TestCase):
         self.assertEqual(samples.miso, b"\xAA\xBB")
 
     def test_stream_decoder_rejects_invalid_payload_len(self) -> None:
-        bad_header = struct.pack("<BBBBHHII", 1, TraceType.I2C, 0, 0, 113, 0, 1, 0)
+        bad_header = struct.pack("<BBBBHHII", 1, TraceType.I2C, 0, 0, TRACE_PACKET_PAYLOAD_BYTES + 1, 0, 1, 0)
         decoder = TraceStreamDecoder()
 
         self.assertEqual(decoder.append(bad_header), [])

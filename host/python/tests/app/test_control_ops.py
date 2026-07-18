@@ -61,3 +61,15 @@ class ControlOpsTests(unittest.TestCase):
             timeout_us=250,
         )
         control.set_stream_enabled.assert_called_once_with(True)
+        self.assertLess(
+            control.mock_calls.index(mock.call.set_stream_enabled(True)),
+            control.mock_calls.index(
+                mock.call.spi_set_config(
+                    1,
+                    capture=SpiCaptureMode.MOSI_MISO,
+                    spi_mode=3,
+                    channel_select_mask=0x04,
+                    timeout_us=250,
+                )
+            ),
+        )

@@ -22,7 +22,7 @@
 #include "usb/usb_cdc.h"
 #include "usb/usb_hid.h"
 
-#define STREAM_SERVICE_PASSES 2u
+#define STREAM_SERVICE_PASSES 4u
 
 /** @brief Bridge the CLI shell read callback onto the USB CDC transport. */
 static uint32_t bridge_cli_read(void *context, uint8_t *data, uint32_t capacity) {
