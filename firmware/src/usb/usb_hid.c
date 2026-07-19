@@ -23,7 +23,7 @@
 /** @brief Payload bytes required for the SPI set-config request. */
 #define USB_HID_SPI_MONITOR_SET_PAYLOAD_BYTES 8u
 /** @brief Payload bytes returned for one SPI bus status snapshot. */
-#define USB_HID_SPI_MONITOR_STATUS_PAYLOAD_BYTES 18u
+#define USB_HID_SPI_MONITOR_STATUS_PAYLOAD_BYTES 38u
 /** @brief Bytes used per channel in the compact SPI all-status response. */
 #define USB_HID_SPI_MONITOR_ALL_STATUS_CHANNEL_BYTES 10u
 /** @brief Total payload bytes returned for the compact SPI all-status response. */
@@ -179,6 +179,11 @@ static bool usb_hid_handle_spi_monitor_get_status(usb_hid_command_t *response, c
     usb_hid_write_u32_le(&response->payload[6], status.timeout_us);
     usb_hid_write_u32_le(&response->payload[10], status.packets_emitted);
     usb_hid_write_u32_le(&response->payload[14], status.overrun_count);
+    usb_hid_write_u32_le(&response->payload[18], status.sink_overrun_count);
+    usb_hid_write_u32_le(&response->payload[22], status.sampler_overrun_count);
+    usb_hid_write_u32_le(&response->payload[26], status.ring_drop_count);
+    usb_hid_write_u32_le(&response->payload[30], status.usb_stall_count);
+    usb_hid_write_u32_le(&response->payload[34], status.peak_ring_depth_packets);
     return true;
 }
 

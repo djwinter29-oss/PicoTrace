@@ -30,6 +30,10 @@ These documents explain broader cross-cutting runtime behavior.
 
 - [streaming-design.md](streaming-design.md): streaming ownership and service-shaping guidance
 
+## Benchmark Notes
+
+- [rp2040-benchmark.md](rp2040-benchmark.md): current RP2040 benchmark method, reference results, and how to run the reusable SPI benchmark script
+
 ## Hardware And Bench Setup
 
 These documents explain board wiring and practical bench usage.

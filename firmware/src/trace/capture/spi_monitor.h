@@ -48,6 +48,11 @@ typedef struct {
     uint32_t timeout_us; /**< Active inter-byte timeout in microseconds. */
     uint32_t packets_emitted; /**< Number of emitted trace packet fragments in the current session. */
     uint32_t overrun_count; /**< Number of bus-visible dropped fragments in the current session, including sampler and sink loss. */
+    uint32_t sink_overrun_count; /**< Number of emitted fragments dropped because the shared trace ring rejected them. */
+    uint32_t sampler_overrun_count; /**< Number of DMA half-buffers overwritten before the producer serviced them. */
+    uint32_t ring_drop_count; /**< Number of trace-ring packet drops observed since this bus session started. */
+    uint32_t usb_stall_count; /**< Number of USB stream stall events observed since this bus session started. */
+    uint32_t peak_ring_depth_packets; /**< Peak queued trace-packet depth observed since this bus session started. */
 } spi_monitor_bus_status_t;
 
 /** @brief Snapshot of one logical SPI monitor channel. */

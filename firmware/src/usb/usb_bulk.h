@@ -28,10 +28,14 @@ uint32_t usb_bulk_stream_write(const uint8_t *data, uint32_t length);
 /**
  * @brief Drain queued trace packets onto the vendor bulk endpoint when streaming is enabled.
  * @param enabled Shared stream enable state.
+ * @return `true` when one or more bytes were queued to TinyUSB during this poll.
  */
-void usb_bulk_poll_stream(bool enabled);
+bool usb_bulk_poll_stream(bool enabled);
 
 /** @brief Flush any pending vendor bulk bytes through TinyUSB. */
 void usb_bulk_flush(void);
+
+/** @brief Return the number of stalled trace-stream write attempts since boot. */
+uint32_t usb_bulk_stall_count(void);
 
 #endif

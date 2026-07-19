@@ -7,7 +7,9 @@ from collections.abc import Callable
 import os
 from pathlib import Path
 import platform
+import queue
 import sys
+import threading
 import time
 
 import usb.backend.libusb1
@@ -22,8 +24,11 @@ DEFAULT_VID = 0xCAFE
 DEFAULT_PID = 0x4003
 DEFAULT_VENDOR_IN_ENDPOINT = 0x83
 DEFAULT_DURATION_SECONDS = 20.0
-DEFAULT_READ_SIZE = 16384
+DEFAULT_READ_SIZE = 65536
 DEFAULT_TIMEOUT_MS = 250
+_TRACE_READER_BUFFER_COUNT = 4
+
+_TRACE_READER_DONE = object()
 
 
 def _candidate_libusb_paths() -> list[Path]:
@@ -143,6 +148,42 @@ def close_trace_device(device: usb.core.Device, interface_number: int | None) ->
         pass
 
 
+def _bulk_read_chunks(
+    backend,
+    handle,
+    endpoint_address: int,
+    interface_number: int,
+    read_size: int,
+    timeout_ms: int,
+    stop_event: threading.Event,
+    free_buffers: queue.SimpleQueue[array.array],
+    chunk_queue: queue.SimpleQueue[tuple[array.array, int] | object],
+    error_box: list[BaseException],
+) -> None:
+    try:
+        while not stop_event.is_set():
+            try:
+                read_buffer = free_buffers.get_nowait()
+            except queue.Empty:
+                read_buffer = array.array("B", [0]) * read_size
+
+            try:
+                transferred = backend.bulk_read(handle, endpoint_address, interface_number, read_buffer, timeout_ms)
+            except usb.core.USBTimeoutError:
+                free_buffers.put(read_buffer)
+                continue
+
+            if transferred <= 0:
+                free_buffers.put(read_buffer)
+                continue
+
+            chunk_queue.put((read_buffer, transferred))
+    except BaseException as exc:
+        error_box.append(exc)
+    finally:
+        chunk_queue.put(_TRACE_READER_DONE)
+
+
 def iter_trace_packets(
     duration_seconds: float | None = DEFAULT_DURATION_SECONDS,
     vid: int = DEFAULT_VID,
@@ -163,9 +204,33 @@ def iter_trace_packets(
     device, interface_number = open_trace_device(vid=vid, pid=pid, endpoint_address=endpoint_address)
     backend = device._ctx.backend
     handle = device._ctx.handle
-    read_buffer = array.array("B", [0]) * read_size
+    free_buffers: queue.SimpleQueue[array.array] = queue.SimpleQueue()
+    chunk_queue: queue.SimpleQueue[tuple[array.array, int] | object] = queue.SimpleQueue()
     decoder = TraceStreamDecoder()
     deadline = None if duration_seconds is None else time.perf_counter() + duration_seconds
+    stop_event = threading.Event()
+    reader_errors: list[BaseException] = []
+
+    for _ in range(_TRACE_READER_BUFFER_COUNT):
+        free_buffers.put(array.array("B", [0]) * read_size)
+
+    reader_thread = threading.Thread(
+        target=_bulk_read_chunks,
+        args=(
+            backend,
+            handle,
+            endpoint_address,
+            interface_number,
+            read_size,
+            timeout_ms,
+            stop_event,
+            free_buffers,
+            chunk_queue,
+            reader_errors,
+        ),
+        daemon=True,
+    )
+    reader_thread.start()
     if on_opened is not None:
         on_opened()
 
@@ -177,19 +242,24 @@ def iter_trace_packets(
                 break
 
             try:
-                transferred = backend.bulk_read(handle, endpoint_address, interface_number, read_buffer, timeout_ms)
-            except usb.core.USBTimeoutError:
+                chunk = chunk_queue.get(timeout=timeout_ms / 1000.0)
+            except queue.Empty:
                 continue
 
-            if transferred <= 0:
-                continue
+            if chunk is _TRACE_READER_DONE:
+                if reader_errors:
+                    raise reader_errors[0]
+                break
 
-            chunk = memoryview(read_buffer)[:transferred]
-            for packet in decoder.append(chunk):
+            read_buffer, transferred = chunk
+            for packet in decoder.append(memoryview(read_buffer)[:transferred]):
                 if channel_registry is not None and not channel_registry.matches_packet(packet):
                     continue
                 yield packet
+            free_buffers.put(read_buffer)
     finally:
+        stop_event.set()
+        reader_thread.join(timeout=(timeout_ms / 1000.0) + 1.0)
         close_trace_device(device, interface_number)
 
 

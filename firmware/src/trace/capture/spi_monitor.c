@@ -19,6 +19,7 @@
 #include "app_control.h"
 #include "config/spi_monitor_config.h"
 #include "trace/trace_ring.h"
+#include "usb/usb_bulk.h"
 
 #include "spi_monitor.pio.h"
 
@@ -69,6 +70,9 @@ typedef struct {
     uint8_t spi_mode; /**< Bus-wide SPI mode applied to all sibling logical channels. */
     uint8_t channel_select_mask; /**< Bit mask of selected chip-select slots on this bus. */
     uint32_t timeout_us; /**< Bus-wide inter-byte timeout applied to all sibling logical channels. */
+    uint32_t ring_drop_count_base; /**< Baseline trace-ring drop count captured when the current session started. */
+    uint32_t usb_stall_count_base; /**< Baseline USB stream stall count captured when the current session started. */
+    uint32_t peak_ring_depth_packets; /**< Peak queued trace-packet depth observed during the current session. */
 } spi_monitor_bus_state_t;
 
 /** @brief Transaction decode state shared by all logical channels on one observed SPI bus. */
@@ -221,6 +225,9 @@ static bool spi_monitor_channel_running(uint32_t channel) {
 /** @brief Clear the shared bus state back to the stopped session state. */
 static void spi_monitor_reset_bus_state(spi_monitor_bus_state_t *bus_state);
 
+/** @brief Update the session peak for queued trace packets after one successful push. */
+static void spi_monitor_note_bus_ring_depth(uint32_t bus);
+
 /** @brief Clear one logical SPI channel back to the stopped session state. */
 static void spi_monitor_reset_channel_state(spi_monitor_channel_state_t *channel_state);
 
@@ -231,14 +238,14 @@ static void spi_monitor_packet_builder_reset(spi_monitor_packet_builder_t *build
     builder->transaction_sequence = 0u;
     builder->pending_flags = 0u;
     builder->payload_offset = 0u;
-    memset(&builder->packet, 0, sizeof(builder->packet));
+    memset(&builder->packet.header, 0, sizeof(builder->packet.header));
 }
 
 /** @brief Drop only the currently open SPI fragment while preserving transaction-level continuation state. */
 static void spi_monitor_packet_builder_drop_open_packet(spi_monitor_packet_builder_t *builder) {
     builder->packet_open = false;
     builder->payload_offset = 0u;
-    memset(&builder->packet, 0, sizeof(builder->packet));
+    memset(&builder->packet.header, 0, sizeof(builder->packet.header));
 }
 
 /** @brief Reset the active transaction state for one observed SPI bus. */
@@ -348,6 +355,7 @@ static void spi_monitor_packet_builder_begin(
 
 /** @brief Flush the currently open SPI packet fragment into the shared trace ring. */
 static bool spi_monitor_packet_builder_flush(
+    uint32_t bus,
     spi_monitor_packet_builder_t *builder,
     spi_monitor_channel_state_t *channel_state,
     uint8_t final_flags,
@@ -371,6 +379,8 @@ static bool spi_monitor_packet_builder_flush(
         return false;
     }
 
+    spi_monitor_note_bus_ring_depth(bus);
+
     channel_state->packets_emitted += 1u;
     if (end_of_transaction) {
         channel_state->transactions_emitted += 1u;
@@ -381,12 +391,13 @@ static bool spi_monitor_packet_builder_flush(
     if (end_of_transaction) {
         builder->transaction_sequence = 0u;
     }
-    memset(&builder->packet, 0, sizeof(builder->packet));
+    memset(&builder->packet.header, 0, sizeof(builder->packet.header));
     return true;
 }
 
 /** @brief Append one SPI data byte pair, emitting a fragment first if the next bytes would exceed @ref TRACE_PACKET_PAYLOAD_BYTES. */
 static void spi_monitor_channel_append_byte_pair(
+    uint32_t bus,
     spi_monitor_packet_builder_t *builder,
     spi_monitor_channel_state_t *channel_state,
     spi_monitor_capture_t capture,
@@ -402,7 +413,7 @@ static void spi_monitor_channel_append_byte_pair(
     }
 
     if ((builder->payload_offset + bytes_needed) > TRACE_PACKET_PAYLOAD_BYTES) {
-        (void)spi_monitor_packet_builder_flush(builder, channel_state, 0u, false);
+        (void)spi_monitor_packet_builder_flush(bus, builder, channel_state, 0u, false);
         spi_monitor_packet_builder_begin(builder, channel_state, capture, logical_channel, transaction_timestamp_us);
     }
 
@@ -425,7 +436,7 @@ static void spi_monitor_close_bus_transaction(uint32_t bus, uint8_t closing_flag
         uint32_t channel = spi_monitor_bus_slot_to_channel(bus, bus_runtime->active_slot);
         spi_monitor_channel_state_t *channel_state = &g_spi_monitor_channels[channel];
 
-        (void)spi_monitor_packet_builder_flush(&bus_runtime->packet_builder, channel_state, closing_flags, true);
+        (void)spi_monitor_packet_builder_flush(bus, &bus_runtime->packet_builder, channel_state, closing_flags, true);
     }
 
     spi_monitor_reset_bus_runtime(bus_runtime);
@@ -542,6 +553,7 @@ static bool spi_monitor_prepare_sampler_program(uint32_t sampler, uint8_t spi_mo
 
 /** @brief Decode one packed MOSI-only sample word for the active logical channel on a bus. */
 static void spi_monitor_process_mosi_word(
+    uint32_t bus,
     spi_monitor_bus_runtime_t *bus_runtime,
     spi_monitor_channel_state_t *channel_state,
     uint8_t logical_channel,
@@ -550,6 +562,7 @@ static void spi_monitor_process_mosi_word(
     uint8_t mosi_byte = spi_monitor_extract_mosi_byte(packed_samples);
 
     spi_monitor_channel_append_byte_pair(
+        bus,
         &bus_runtime->packet_builder,
         channel_state,
         SPI_MONITOR_CAPTURE_MOSI,
@@ -562,6 +575,7 @@ static void spi_monitor_process_mosi_word(
 
 /** @brief Decode one packed MOSI+MISO sample word for the active logical channel on a bus. */
 static void spi_monitor_process_dual_word(
+    uint32_t bus,
     spi_monitor_bus_runtime_t *bus_runtime,
     spi_monitor_channel_state_t *channel_state,
     uint8_t logical_channel,
@@ -571,6 +585,7 @@ static void spi_monitor_process_dual_word(
     uint8_t miso_byte = spi_monitor_extract_miso_byte(packed_samples);
 
     spi_monitor_channel_append_byte_pair(
+        bus,
         &bus_runtime->packet_builder,
         channel_state,
         SPI_MONITOR_CAPTURE_MOSI_MISO,
@@ -583,6 +598,7 @@ static void spi_monitor_process_dual_word(
 
 /** @brief Decode one raw SPI word buffer for the currently attributed logical channel on a bus. */
 static void spi_monitor_decode_bus_words(
+    uint32_t bus,
     spi_monitor_bus_runtime_t *bus_runtime,
     spi_monitor_channel_state_t *channel_state,
     spi_monitor_capture_t capture,
@@ -592,13 +608,13 @@ static void spi_monitor_decode_bus_words(
 ) {
     if (capture == SPI_MONITOR_CAPTURE_MOSI_MISO) {
         for (uint32_t word_index = 0u; word_index < raw_word_count; ++word_index) {
-            spi_monitor_process_dual_word(bus_runtime, channel_state, logical_channel, raw_words[word_index]);
+            spi_monitor_process_dual_word(bus, bus_runtime, channel_state, logical_channel, raw_words[word_index]);
         }
         return;
     }
 
     for (uint32_t word_index = 0u; word_index < raw_word_count; ++word_index) {
-        spi_monitor_process_mosi_word(bus_runtime, channel_state, logical_channel, raw_words[word_index]);
+        spi_monitor_process_mosi_word(bus, bus_runtime, channel_state, logical_channel, raw_words[word_index]);
     }
 }
 
@@ -638,6 +654,7 @@ void spi_monitor_internal_process_bus_words(
         logical_channel = g_spi_monitor_logical_channels[channel];
 
         spi_monitor_decode_bus_words(
+            bus,
             bus_runtime,
             channel_state,
             capture,
@@ -656,6 +673,7 @@ void spi_monitor_internal_process_bus_words(
     logical_channel = g_spi_monitor_logical_channels[channel];
 
     spi_monitor_decode_bus_words(
+        bus,
         bus_runtime,
         channel_state,
         capture,
@@ -912,6 +930,18 @@ static void spi_monitor_reset_bus_state(spi_monitor_bus_state_t *bus_state) {
     bus_state->spi_mode = 0u;
     bus_state->channel_select_mask = 0u;
     bus_state->timeout_us = 0u;
+    bus_state->ring_drop_count_base = 0u;
+    bus_state->usb_stall_count_base = 0u;
+    bus_state->peak_ring_depth_packets = 0u;
+}
+
+/** @brief Update the session peak for queued trace packets after one successful push. */
+static void spi_monitor_note_bus_ring_depth(uint32_t bus) {
+    uint32_t ring_depth = trace_ring_available();
+
+    if (ring_depth > g_spi_monitor_buses[bus].peak_ring_depth_packets) {
+        g_spi_monitor_buses[bus].peak_ring_depth_packets = ring_depth;
+    }
 }
 
 /** @brief Clear one logical SPI channel back to the stopped session state. */
@@ -942,6 +972,7 @@ static void spi_monitor_fill_bus_status(uint32_t bus, spi_monitor_bus_status_t *
     const spi_monitor_bus_state_t *bus_state = &g_spi_monitor_buses[bus];
     uint32_t packets_emitted = 0u;
     uint32_t sink_overrun_count = 0u;
+    uint32_t sampler_overrun_count = spi_monitor_bus_sampler_overrun_count(bus);
     uint32_t first_channel;
     uint32_t end_channel;
 
@@ -959,7 +990,12 @@ static void spi_monitor_fill_bus_status(uint32_t bus, spi_monitor_bus_status_t *
     status_out->channel_select_mask = bus_state->channel_select_mask;
     status_out->timeout_us = bus_state->timeout_us;
     status_out->packets_emitted = packets_emitted;
-    status_out->overrun_count = sink_overrun_count + spi_monitor_bus_sampler_overrun_count(bus);
+    status_out->overrun_count = sink_overrun_count + sampler_overrun_count;
+    status_out->sink_overrun_count = sink_overrun_count;
+    status_out->sampler_overrun_count = sampler_overrun_count;
+    status_out->ring_drop_count = trace_ring_dropped_packets() - bus_state->ring_drop_count_base;
+    status_out->usb_stall_count = usb_bulk_stall_count() - bus_state->usb_stall_count_base;
+    status_out->peak_ring_depth_packets = bus_state->peak_ring_depth_packets;
 }
 
 /** @copydoc spi_monitor_init */
@@ -1092,6 +1128,9 @@ spi_monitor_rc_t spi_monitor_set_bus_config(uint32_t bus, const spi_monitor_bus_
     bus_state->spi_mode = config->spi_mode;
     bus_state->channel_select_mask = config->channel_select_mask;
     bus_state->timeout_us = timeout_us;
+    bus_state->ring_drop_count_base = trace_ring_dropped_packets();
+    bus_state->usb_stall_count_base = usb_bulk_stall_count();
+    bus_state->peak_ring_depth_packets = trace_ring_available();
     spi_monitor_reset_bus_runtime(&g_spi_monitor_bus_runtimes[bus]);
     return SPI_MONITOR_RC_OK;
 }

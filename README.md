@@ -100,6 +100,15 @@ Default Pico build and load commands:
 ./tools/linux/load.sh
 ```
 
+For repeatable end-to-end SPI throughput checks on Linux, use:
+
+```bash
+./.venv/bin/python tools/linux/spi_trace_benchmark.py --capture mosi --speed-hz 11500000 12000000
+```
+
+See [docs/rp2040-benchmark.md](docs/rp2040-benchmark.md) for the benchmark method, current RP2040
+reference results, and example `MOSI` and `MOSI+MISO` runs.
+
 On Linux, `./tools/linux/load.sh` now performs a best-effort CDC `reboot` after SWD programming and
 waits for the USB CDC device to disconnect and re-enumerate before returning. This leaves the board
 in the same post-reboot runtime state that was validated for multicore monitor control, so CDC

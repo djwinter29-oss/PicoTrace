@@ -1744,7 +1744,7 @@ static void test_hid_spi_monitor_get_status_returns_bus_payload(void) {
     assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
     assert(response.opcode == USB_HID_OPCODE_SPI_MONITOR_GET_STATUS);
     assert(response.status == USB_HID_STATUS_OK);
-    assert(response.payload_length == 18u);
+    assert(response.payload_length == 38u);
     assert(response.payload[0] == 1u);
     assert(response.payload[1] == 1u);
     assert(response.payload[2] == 1u);
@@ -1757,6 +1757,11 @@ static void test_hid_spi_monitor_get_status_returns_bus_payload(void) {
     assert(response.payload[9] == 0x00u);
     assert(response.payload[10] == 7u);
     assert(response.payload[14] == 3u);
+    assert(response.payload[18] == 0u);
+    assert(response.payload[22] == 0u);
+    assert(response.payload[26] == 0u);
+    assert(response.payload[30] == 0u);
+    assert(response.payload[34] == 0u);
 }
 
 static void test_hid_spi_monitor_get_all_status_returns_all_channels(void) {

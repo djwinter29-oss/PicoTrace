@@ -17,12 +17,14 @@
 /** @brief Vendor endpoint packet size used when streaming trace data. */
 #define USB_VENDOR_PACKET_SIZE 64u
 /** @brief Upper bound on vendor write attempts per service pass to keep control paths responsive. */
-#define USB_VENDOR_STREAM_WRITE_BUDGET 16u
+#define USB_VENDOR_STREAM_WRITE_BUDGET 64u
 
 /** @brief Borrowed pointer to the trace packet currently being streamed. */
 static const trace_packet_t *usb_stream_packet;
 /** @brief Byte offset already transmitted from @ref usb_stream_packet. */
 static uint32_t usb_stream_packet_offset;
+/** @brief Number of stream polls that found queued data but could not queue more bytes to TinyUSB. */
+static uint32_t usb_stream_stall_count;
 
 /** @brief Drop any in-progress borrowed packet and restart stream state at a packet boundary. */
 static void usb_bulk_reset_stream_state(void) {
@@ -31,10 +33,12 @@ static void usb_bulk_reset_stream_state(void) {
 }
 
 /** @brief Pull packets from the trace ring and stream them over the vendor endpoint. */
-static void usb_bulk_poll_trace_ring(void) {
+static bool usb_bulk_poll_trace_ring(void) {
+    bool wrote_any = false;
     uint32_t writes_remaining = USB_VENDOR_STREAM_WRITE_BUDGET;
 
     while (writes_remaining > 0u) {
+        uint32_t available;
         uint32_t packet_bytes;
         uint32_t remaining;
         uint32_t written;
@@ -58,11 +62,19 @@ static void usb_bulk_poll_trace_ring(void) {
         }
 
         remaining = packet_bytes - usb_stream_packet_offset;
-        written = usb_bulk_stream_write(((const uint8_t *)usb_stream_packet) + usb_stream_packet_offset, remaining);
-        if (written == 0u) {
+        available = tud_vendor_n_write_available(USB_VENDOR_ITF);
+        if (available == 0u) {
+            usb_stream_stall_count += 1u;
             break;
         }
 
+        written = usb_bulk_stream_write(((const uint8_t *)usb_stream_packet) + usb_stream_packet_offset, remaining);
+        if (written == 0u) {
+            usb_stream_stall_count += 1u;
+            break;
+        }
+
+        wrote_any = true;
         writes_remaining -= 1u;
         usb_stream_packet_offset += written;
         if (usb_stream_packet_offset >= packet_bytes) {
@@ -70,6 +82,8 @@ static void usb_bulk_poll_trace_ring(void) {
             usb_bulk_reset_stream_state();
         }
     }
+
+    return wrote_any;
 }
 
 /**
@@ -125,17 +139,17 @@ uint32_t usb_bulk_stream_write(const uint8_t *data, uint32_t length) {
 }
 
 /** @copydoc usb_bulk_poll_stream */
-void usb_bulk_poll_stream(bool enabled) {
+bool usb_bulk_poll_stream(bool enabled) {
     if (!enabled) {
         usb_bulk_reset_stream_state();
-        return;
+        return false;
     }
 
     if (!tud_ready()) {
-        return;
+        return false;
     }
 
-    usb_bulk_poll_trace_ring();
+    return usb_bulk_poll_trace_ring();
 }
 
 /** @copydoc usb_bulk_flush */
@@ -145,4 +159,9 @@ void usb_bulk_flush(void) {
     }
 
     tud_vendor_n_write_flush(USB_VENDOR_ITF);
+}
+
+/** @copydoc usb_bulk_stall_count */
+uint32_t usb_bulk_stall_count(void) {
+    return usb_stream_stall_count;
 }

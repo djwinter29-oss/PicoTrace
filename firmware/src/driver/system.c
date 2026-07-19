@@ -8,9 +8,11 @@
 #include "hardware/clocks.h"
 #include "hardware/watchdog.h"
 
+#include <stdbool.h>
+
 /** @copydoc system_init_clock */
 void system_init_clock(void) {
-    hard_assert(set_sys_clock_khz(200000u, true));
+    hard_assert(set_sys_clock_khz(SYSTEM_CLOCK, true));
 }
 
 /** @copydoc system_reboot */
