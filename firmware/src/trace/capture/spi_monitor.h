@@ -63,7 +63,7 @@ typedef struct {
     uint8_t spi_mode; /**< Active SPI mode `0` through `3`. */
     uint32_t timeout_us; /**< Active inter-byte timeout in microseconds. */
     uint32_t packets_emitted; /**< Number of emitted trace packet fragments in the current session. */
-    uint32_t overrun_count; /**< Number of channel-attributable trace packet fragments dropped in the current session. */
+    uint32_t overrun_count; /**< Number of channel-attributable sink or sampler drops in the current session. */
 } spi_monitor_channel_status_t;
 
 /**

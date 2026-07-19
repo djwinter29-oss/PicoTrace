@@ -879,7 +879,7 @@ static void test_spi_monitor_poll_flushes_independent_same_bus_channel_dma_progr
     assert(packet.payload[0] == 0x22u);
 }
 
-/** @brief Verify that sampler overruns are reported at bus scope, not duplicated onto channels. */
+/** @brief Verify that sampler overruns remain visible on both the owning channel and the bus aggregate. */
 static void test_spi_monitor_directional_overruns_are_aggregated_in_status(void) {
     spi_monitor_bus_config_t config = {0};
     spi_monitor_bus_status_t bus_status;
@@ -897,7 +897,7 @@ static void test_spi_monitor_directional_overruns_are_aggregated_in_status(void)
     assert(spi_monitor_get_bus_status(0u, &bus_status) == SPI_MONITOR_RC_OK);
     assert(spi_monitor_get_all_status(status) == SPI_MONITOR_RC_OK);
     assert(bus_status.overrun_count == 5u);
-    assert(status[1].overrun_count == 0u);
+    assert(status[1].overrun_count == 5u);
 }
 
 /** @brief Verify that timeout-driven runtime flushes refresh per-channel overrun status immediately. */

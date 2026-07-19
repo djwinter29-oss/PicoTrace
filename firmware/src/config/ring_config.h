@@ -8,7 +8,7 @@
 
 /** @brief Total bytes reserved for one logical trace packet, including the fixed header. */
 #ifndef TRACE_PACKET_BYTES
-#define TRACE_PACKET_BYTES 512u
+#define TRACE_PACKET_BYTES 896u
 #endif
 
 /** @brief Number of fixed packet slots in the singleton trace ring. */

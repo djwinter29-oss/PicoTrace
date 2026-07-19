@@ -1,7 +1,7 @@
 # RP2040 Benchmark Notes
 
 This document captures the current sustained-throughput benchmark shape for the Raspberry Pi Pico
-(`RP2040`) firmware and the most recent measured results on the current `225 MHz` baseline.
+(`RP2040`) firmware and the most recent measured results on the current `250 MHz` baseline.
 
 ## What This Benchmark Measures
 
@@ -23,9 +23,9 @@ This means the result is a throughput ceiling for the full stack, not just the s
 The current `RP2040` benchmark baseline in this repository is:
 
 - board: Raspberry Pi Pico
-- firmware clock: `225 MHz`
-- trace packet size: `512` bytes
-- trace payload bytes: `496` bytes
+- firmware clock: `250 MHz`
+- trace packet size: `896` bytes
+- trace payload bytes: `880` bytes
 - trace ring capacity: `256` packets
 - stream service passes: `16`
 - flush policy: flush vendor bulk only after a stream pass made progress
@@ -49,11 +49,46 @@ Unless a run says otherwise, the benchmark uses this transfer window:
 
 ## Current Results
 
-These are the current reference results on the `225 MHz` RP2040 baseline.
+These are the current reference results on the `250 MHz` RP2040 baseline.
+
+### MOSI Only At 250 MHz
+
+| Requested SPI clock | Pass rate | Notes |
+| --- | --- | --- |
+| `15.5 MHz` | `3/3` | Clean payload pass; one trial reported a single sampler overrun counter increment |
+| `16.0 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
+| `16.5 MHz` | `3/3` | Current highest verified lossless pass point |
+| `17.0 MHz` | `1/3` | First unstable downstream-limited point; failing trials hit `sink=ring` and `peak=256` |
+| `17.5 MHz` | `0/3` | Consistent downstream-limited failures |
+| `18.0 MHz` | `0/3` | Failure mode moves upstream; sampler overruns dominate |
+
+Observed transmit throughput across the verified MOSI pass points at `250 MHz` was about
+`7.6-8.1 Mb/s` over the full transfer window.
+
+### MOSI + MISO At 250 MHz
+
+| Requested SPI clock | Pass rate | Notes |
+| --- | --- | --- |
+| `5.4 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
+| `5.5 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
+| `5.6 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
+| `5.7 MHz` | `5/5` | Clean pass with zero sampler and sink overruns |
+| `5.75 MHz` | `5/5` | Clean pass with zero sampler and sink overruns |
+| `5.8 MHz` | `5/5` | Current highest verified lossless pass point |
+| `5.9 MHz` | `2/5` | First unstable downstream-limited point; failing trials hit `sink=ring` and `peak=256` |
+| `6.0 MHz` | `1/3` | Mostly downstream-limited failures |
+
+Observed transmit throughput across the verified MOSI+MISO pass points at `250 MHz` was about
+`3.2-3.6 Mb/s` over the full transfer window.
+
+## Historical 225 MHz Reference
+
+Before the current `250 MHz` Pico baseline, this repository tracked the following `225 MHz`
+RP2040 reference results.
 
 ## Historical 200 MHz Reference
 
-Before the current `225 MHz` Pico baseline, this repository tracked the following `200 MHz`
+Before the earlier `225 MHz` Pico baseline, this repository tracked the following `200 MHz`
 RP2040 reference results.
 
 These older numbers remain useful when comparing the effect of later sampler, packetization, or
@@ -89,11 +124,13 @@ full transfer window.
 | `12.75 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
 | `13.0 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
 | `13.25 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
-| `13.5 MHz` | `3/3` | Current highest verified lossless pass point |
-| `14.0 MHz` | `0/3` | First consistent downstream-limited failure point |
-| `14.5 MHz` | `0/3` | Same downstream-limited failure signature as `14.0 MHz` |
+| `13.5 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
+| `14.0 MHz` | `3/3` | Clean pass after increasing trace packet size to `896` bytes |
+| `14.5 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
+| `15.0 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
+| `15.5 MHz` | `3/3` | Current highest verified lossless pass point |
 
-Observed transmit throughput across the verified MOSI pass range was about `6.4-7.1 Mb/s` over
+Observed transmit throughput across the verified MOSI pass range was about `6.8-7.9 Mb/s` over
 the full transfer window.
 
 ### MOSI + MISO
@@ -102,13 +139,13 @@ the full transfer window.
 | --- | --- | --- |
 | `4.5 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
 | `5.0 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
-| `5.1 MHz` | `3/3` | Current highest verified lossless pass point |
-| `5.15 MHz` | `2/3` | Edge instability; one downstream-limited failure |
-| `5.2 MHz` | `1/3` | Mostly failing with downstream-limited drops |
-| `5.25 MHz` | `0/3` | Consistent downstream-limited failures |
-| `5.5 MHz` | `2/3` | Non-monotonic edge behavior; still not reliable |
+| `5.1 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
+| `5.2 MHz` | `3/3` | Clean pass after increasing trace packet size to `896` bytes |
+| `5.25 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
+| `5.3 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
+| `5.4 MHz` | `3/3` | Current highest verified lossless pass point |
 
-Observed transmit throughput across the verified MOSI+MISO pass range was about `3.0-3.4 Mb/s`
+Observed transmit throughput across the verified MOSI+MISO pass range was about `2.9-3.6 Mb/s`
 over the full transfer window.
 
 ## How To Interpret Failures
@@ -127,7 +164,9 @@ the sink side dropped packets before the host drained them fast enough.
 If `sampler` starts climbing, the failure mode has moved earlier in the pipeline and the result is
 no longer purely a USB drain or host drain limit.
 
-At the current `225 MHz` reference points listed above, the verified passing runs stayed lossless:
+At the current `250 MHz` reference points listed above, the verified passing runs stayed lossless,
+except for one `15.5 MHz` MOSI trial that reported a single sampler overrun count without payload
+loss:
 
 - `sampler=0`
 - `sink=0`
@@ -136,12 +175,14 @@ At the current `225 MHz` reference points listed above, the verified passing run
 USB stall counts can still be high near the edge, and peak ring depth can rise substantially, but
 those signals did not produce data loss at the documented passing points.
 
-The current edge behavior on this `225 MHz` baseline splits cleanly by capture mode:
+The current edge behavior on this `250 MHz` baseline improved further after raising the RP2040
+system clock from `225 MHz` to `250 MHz` while keeping fixed trace packet size at `896` bytes:
 
-- MOSI-only capture remains lossless through `13.5 MHz` and then fails consistently at `14.0 MHz`
-  and above with `sampler=0`, `sink=ring`, and `peak=256`
-- MOSI+MISO capture remains lossless through `5.1 MHz`, enters a narrow unstable band at
-  `5.15-5.5 MHz`, and shows the same downstream-limit signature when it fails
+- MOSI-only capture remains lossless through `16.5 MHz`, becomes unstable at `17.0 MHz`, and
+  then fails consistently by `17.5 MHz`; the `18.0 MHz` failure mode shifts upstream into sampler
+  overruns
+- MOSI+MISO capture remains lossless through `5.8 MHz` and becomes unstable at `5.9 MHz` with the
+  same downstream ring-full signature seen at lower clocks
 
 ## Running The Benchmark
 
@@ -157,7 +198,7 @@ Run a MOSI-only edge sweep on the current RP2040 baseline:
 ./.venv/bin/python tools/linux/spi_trace_benchmark.py \
   --board pico \
   --capture mosi \
-  --speed-hz 11500000 12000000 12250000 12500000 12750000 13000000 13250000 13500000 14000000
+  --speed-hz 15500000 16000000 16500000 17000000 17500000 18000000
 ```
 
 Run a dual-line sweep:
@@ -166,7 +207,7 @@ Run a dual-line sweep:
 ./.venv/bin/python tools/linux/spi_trace_benchmark.py \
   --board pico \
   --capture mosi-miso \
-  --speed-hz 4500000 5000000 5100000 5150000 5200000 5250000 5500000
+  --speed-hz 5600000 5700000 5750000 5800000 5900000 6000000
 ```
 
 The script prints one summary line per requested speed and includes:

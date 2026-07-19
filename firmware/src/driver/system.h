@@ -17,7 +17,7 @@
 #if defined(PICO_RP2350A) || defined(PICO_RP2350B)
 #define SYSTEM_CLOCK 150000u
 #else
-#define SYSTEM_CLOCK 225000u
+#define SYSTEM_CLOCK 250000u
 #endif
 
 /** @brief Configure the board system clock for the PicoTrace firmware runtime. */

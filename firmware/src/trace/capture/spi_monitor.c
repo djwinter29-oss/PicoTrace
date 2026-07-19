@@ -1164,6 +1164,7 @@ static void spi_monitor_fill_status(uint32_t channel, spi_monitor_channel_status
     const spi_monitor_channel_state_t *channel_state = &g_spi_monitor_channels[channel];
     uint32_t bus = spi_monitor_channel_to_bus(channel);
     bool running = spi_monitor_channel_running(channel);
+    uint32_t sampler_overrun_count = running ? g_spi_monitor_channel_samplers[channel].overrun_count : 0u;
 
     memset(status_out, 0, sizeof(*status_out));
     status_out->initialized = g_spi_monitor_initialized && !g_spi_monitor_init_failed;
@@ -1172,7 +1173,7 @@ static void spi_monitor_fill_status(uint32_t channel, spi_monitor_channel_status
     status_out->spi_mode = running ? g_spi_monitor_buses[bus].spi_mode : 0u;
     status_out->timeout_us = running ? g_spi_monitor_buses[bus].timeout_us : 0u;
     status_out->packets_emitted = channel_state->packets_emitted;
-    status_out->overrun_count = running ? channel_state->sink_overrun_count : 0u;
+    status_out->overrun_count = running ? (channel_state->sink_overrun_count + sampler_overrun_count) : 0u;
 }
 
 /** @brief Materialize one observed SPI bus state into the public bus status snapshot. */

@@ -307,17 +307,14 @@ This is the smallest SPI monitor design that fits the current PicoTrace architec
 - immediate fragment push at `TRACE_PACKET_PAYLOAD_BYTES`
 - no requirement for a large per-transaction temporary buffer
 
-## Implementation Note
+## Implementation Status
 
-At the time of this design update, the checked-in firmware implementation still reflects the older
-bus-owned continuous sampler in `firmware/src/trace/capture/spi_monitor.c` and
-`firmware/src/trace/capture/spi_monitor.pio`.
-
-This document describes the intended replacement design:
+The checked-in firmware implementation in `firmware/src/trace/capture/spi_monitor.c` and
+`firmware/src/trace/capture/spi_monitor.pio` now follows this per-`CS_N` sampler design:
 
 - two observed `CS_N` slots per bus
 - one sampler and DMA path per `CS_N` slot
 - no sampling while `CS_N` is inactive
 
-The implementation should be updated to match this design rather than treating the previous
-continuous-sampling behavior as authoritative.
+Treat the current implementation and this document as the same design baseline. If they diverge in
+future changes, update both in the same change set.

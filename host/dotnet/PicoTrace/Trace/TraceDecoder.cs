@@ -6,7 +6,7 @@ namespace PicoTrace.Trace;
 public static class TraceDecoder
 {
     public const byte TracePacketVersion = 1;
-    public const int TracePacketBytes = 128;
+    public const int TracePacketBytes = 896;
     public const int TracePacketHeaderBytes = 16;
     public const int TracePacketPayloadBytes = TracePacketBytes - TracePacketHeaderBytes;
 
