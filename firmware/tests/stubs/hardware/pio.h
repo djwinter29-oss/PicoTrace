@@ -8,6 +8,7 @@ typedef unsigned int uint;
 
 typedef struct {
     uint pin_base;
+    uint jmp_pin;
     bool shift_right;
     bool autopush;
     uint push_threshold;
@@ -98,6 +99,10 @@ static inline void sm_config_set_in_shift(pio_sm_config *config, bool shift_righ
     config->push_threshold = push_threshold;
 }
 
+static inline void sm_config_set_jmp_pin(pio_sm_config *config, uint jmp_pin) {
+    config->jmp_pin = jmp_pin;
+}
+
 static inline void sm_config_set_clkdiv(pio_sm_config *config, float clkdiv) {
     config->clkdiv = clkdiv;
 }
@@ -111,6 +116,16 @@ static inline uint pio_get_dreq(PIO pio, uint sm, bool is_tx) {
 static inline uint16_t pio_encode_wait_gpio(bool polarity, uint gpio) {
     (void)polarity;
     (void)gpio;
+    return 0u;
+}
+
+static inline uint16_t pio_encode_jmp_pin(uint addr) {
+    (void)addr;
+    return 0u;
+}
+
+static inline uint16_t pio_encode_jmp(uint addr) {
+    (void)addr;
     return 0u;
 }
 

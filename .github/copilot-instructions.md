@@ -92,6 +92,7 @@ Lazy code without its check is unfinished. For non-trivial logic, leave one runn
 - Describe the repository as PicoTrace, a low-cost RP2040/RP2350 protocol tracer
 - Be explicit about which files implement shared USB scaffolding versus SPI/I2C trace-specific behavior
 - Keep documentation concise and practical
+- Update relevant instruction and skill files while the work is in progress whenever repository behavior, workflows, or expectations change; do not leave those updates as a separate follow-up when the current task materially changes them
 - Keep SPI and I2C support described as passive transaction capture on a shared USB host-control model
 - Put implementation-level design writeups under `docs/details/`
 - Keep board pin allocation in `docs/hardware-connections.md` and concrete Raspberry Pi bench hookup guidance in `docs/raspberry-pi-test-setup.md`
@@ -110,6 +111,7 @@ Lazy code without its check is unfinished. For non-trivial logic, leave one runn
 ## Change Guidance
 
 - Keep changes narrowly scoped to the requested behavior
+- When a task adds or changes repeatable workflow knowledge, update the matching `.github/copilot-instructions.md` guidance and any affected `.github/skills/` content in the same change set
 - Do not add unrelated tooling or interfaces
 - Prefer PicoTrace naming on the user-facing USB surface unless the task says otherwise
 - Keep host naming aligned with the current public surfaces: Python package `picotrace`, CLI `picotrace`, and .NET project `PicoTrace`

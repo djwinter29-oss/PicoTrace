@@ -6,7 +6,7 @@
 /** @brief Number of observed SPI buses owned by the current board mapping. */
 #define SPI_MONITOR_BUS_COUNT 2u
 /** @brief Number of observed chip-select inputs per SPI bus. */
-#define SPI_MONITOR_CS_SLOTS_PER_BUS 3u
+#define SPI_MONITOR_CS_SLOTS_PER_BUS 2u
 /** @brief Total number of logical SPI channels exposed by the shared host-control model. */
 #define SPI_MONITOR_CHANNEL_COUNT (SPI_MONITOR_BUS_COUNT * SPI_MONITOR_CS_SLOTS_PER_BUS)
 /** @brief Number of DMA-backed SPI bus samplers owned by the current board mapping. */
@@ -28,33 +28,25 @@
 #define SPI_MONITOR_SPI0_CS0_GPIO 5u
 /** @brief Observed `spi0` chip-select slot `1` GPIO. */
 #define SPI_MONITOR_SPI0_CS1_GPIO 6u
-/** @brief Observed `spi0` chip-select slot `2` GPIO. */
-#define SPI_MONITOR_SPI0_CS2_GPIO 7u
 
 /** @brief Observed `spi1` chip-select slot `0` GPIO. */
-#define SPI_MONITOR_SPI1_CS0_GPIO 8u
+#define SPI_MONITOR_SPI1_CS0_GPIO 7u
 /** @brief Observed `spi1` chip-select slot `1` GPIO. */
-#define SPI_MONITOR_SPI1_CS1_GPIO 9u
-/** @brief Observed `spi1` chip-select slot `2` GPIO. */
-#define SPI_MONITOR_SPI1_CS2_GPIO 10u
+#define SPI_MONITOR_SPI1_CS1_GPIO 8u
 /** @brief Observed `spi1` clock GPIO. */
-#define SPI_MONITOR_SPI1_SCLK_GPIO 11u
+#define SPI_MONITOR_SPI1_SCLK_GPIO 9u
 /** @brief Observed `spi1` controller-to-peripheral data GPIO. */
-#define SPI_MONITOR_SPI1_MOSI_GPIO 12u
+#define SPI_MONITOR_SPI1_MOSI_GPIO 10u
 /** @brief Observed `spi1` optional peripheral-to-controller data GPIO. */
-#define SPI_MONITOR_SPI1_MISO_GPIO 13u
+#define SPI_MONITOR_SPI1_MISO_GPIO 11u
 
 /** @brief Logical SPI channel id for `spi0` chip-select slot `0`. */
 #define SPI_MONITOR_CH0_LOGICAL_CHANNEL 0x00u
 /** @brief Logical SPI channel id for `spi0` chip-select slot `1`. */
 #define SPI_MONITOR_CH1_LOGICAL_CHANNEL 0x01u
-/** @brief Logical SPI channel id for `spi0` chip-select slot `2`. */
-#define SPI_MONITOR_CH2_LOGICAL_CHANNEL 0x02u
 /** @brief Logical SPI channel id for `spi1` chip-select slot `0`. */
-#define SPI_MONITOR_CH3_LOGICAL_CHANNEL 0x03u
+#define SPI_MONITOR_CH2_LOGICAL_CHANNEL 0x02u
 /** @brief Logical SPI channel id for `spi1` chip-select slot `1`. */
-#define SPI_MONITOR_CH4_LOGICAL_CHANNEL 0x04u
-/** @brief Logical SPI channel id for `spi1` chip-select slot `2`. */
-#define SPI_MONITOR_CH5_LOGICAL_CHANNEL 0x05u
+#define SPI_MONITOR_CH3_LOGICAL_CHANNEL 0x03u
 
 #endif

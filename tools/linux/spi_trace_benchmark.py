@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import re
 import sys
 import threading
 import time
@@ -112,6 +113,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bits-per-word", type=int, default=8, help="SPI bits per word")
     parser.add_argument("--delay-usecs", type=int, default=0, help="SPI inter-transfer delay in microseconds")
     parser.add_argument("--bus", type=int, default=0, help="PicoTrace SPI bus index")
+    parser.add_argument("--board", choices=("pico", "pico2"), default="pico", help="target PicoTrace board family for reporting the configured firmware clock")
     parser.add_argument("--channel", type=int, default=0, help="logical trace channel to read back")
     parser.add_argument(
         "--channel-select-mask",
@@ -312,17 +314,20 @@ def format_trial(index: int, total_bytes: int, capture_mode: SpiCaptureMode, res
     )
 
 
-def current_clock_khz() -> int | None:
+def current_clock_khz(board: str) -> int | None:
     system_h = REPO_ROOT / "firmware" / "src" / "driver" / "system.h"
-    for line in system_h.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if stripped.startswith("#define SYSTEM_CLOCK "):
-            value_text = stripped.split()[-1].rstrip("uU")
-            try:
-                return int(value_text)
-            except ValueError:
-                return None
-    return None
+    text = system_h.read_text(encoding="utf-8")
+    match = re.search(
+        r"#if defined\(PICO_RP2350A\) \|\| defined\(PICO_RP2350B\)\s*"
+        r"#define SYSTEM_CLOCK (\d+)u\s*#else\s*#define SYSTEM_CLOCK (\d+)u",
+        text,
+        re.MULTILINE,
+    )
+
+    if match is None:
+        return None
+
+    return int(match.group(1 if board.startswith("pico2") else 2))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -338,7 +343,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     expected = data_chunk * args.repeat_count
     total_bytes = args.chunk_bytes * args.repeat_count
 
-    clock_khz = current_clock_khz()
+    clock_khz = current_clock_khz(args.board)
     prefix = f"firmware_clock={clock_khz}kHz " if clock_khz is not None else ""
     print(
         f"{prefix}capture={args.capture} chunk_bytes={args.chunk_bytes} "

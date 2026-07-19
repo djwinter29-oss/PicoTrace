@@ -50,17 +50,17 @@ static bool stub_monitor_overrun[4];
 static uint32_t stub_monitor_completed_buffers[4];
 static uint32_t stub_monitor_overrun_count[4];
 static i2c_monitor_rc_t stub_monitor_result = I2C_MONITOR_RC_OK;
-static spi_monitor_capture_t stub_spi_capture[6];
-static uint8_t stub_spi_mode[6];
+static spi_monitor_capture_t stub_spi_capture[SPI_MONITOR_CHANNEL_COUNT];
+static uint8_t stub_spi_mode[SPI_MONITOR_CHANNEL_COUNT];
 static uint8_t stub_spi_channel_select_mask[2];
 static spi_monitor_capture_t stub_spi_bus_capture[2];
 static uint8_t stub_spi_bus_mode[2];
 static bool stub_spi_bus_running[2];
-static uint32_t stub_spi_timeout_us[6];
+static uint32_t stub_spi_timeout_us[SPI_MONITOR_CHANNEL_COUNT];
 static uint32_t stub_spi_bus_timeout_us[2];
-static uint32_t stub_spi_packets_emitted[6];
-static uint32_t stub_spi_overrun_count[6];
-static bool stub_spi_running[6];
+static uint32_t stub_spi_packets_emitted[SPI_MONITOR_CHANNEL_COUNT];
+static uint32_t stub_spi_overrun_count[SPI_MONITOR_CHANNEL_COUNT];
+static bool stub_spi_running[SPI_MONITOR_CHANNEL_COUNT];
 static spi_monitor_rc_t stub_spi_monitor_result = SPI_MONITOR_RC_OK;
 uint64_t stub_gpio_high_mask = UINT64_MAX;
 bool stub_dma_configure_fail_next;
@@ -291,7 +291,7 @@ static spi_monitor_rc_t stub_spi_monitor_get_all_status(spi_monitor_channel_stat
         return SPI_MONITOR_RC_INVALID;
     }
 
-    for (channel = 0u; channel < 6u; ++channel) {
+    for (channel = 0u; channel < SPI_MONITOR_CHANNEL_COUNT; ++channel) {
         memset(&status_out[channel], 0, sizeof(status_out[channel]));
         status_out[channel].initialized = true;
         status_out[channel].running = stub_spi_running[channel];
@@ -471,16 +471,12 @@ static void test_spi_monitor_bus_config_updates_all_bus_channels(void) {
 
     assert(spi_monitor_set_bus_config(1u, &config) == SPI_MONITOR_RC_OK);
     assert(spi_monitor_get_all_status(status) == SPI_MONITOR_RC_OK);
-    assert(status[2].running == false);
+    assert(status[2].running == true);
     assert(status[3].running == true);
-    assert(status[4].running == true);
-    assert(status[5].running == true);
+    assert(status[2].capture == SPI_MONITOR_CAPTURE_MOSI_MISO);
     assert(status[3].capture == SPI_MONITOR_CAPTURE_MOSI_MISO);
-    assert(status[4].capture == SPI_MONITOR_CAPTURE_MOSI_MISO);
-    assert(status[5].capture == SPI_MONITOR_CAPTURE_MOSI_MISO);
+    assert(status[2].spi_mode == 3u);
     assert(status[3].spi_mode == 3u);
-    assert(status[4].spi_mode == 3u);
-    assert(status[5].spi_mode == 3u);
 }
 
 static void test_spi_monitor_allows_different_buses_to_use_different_modes(void) {
@@ -545,6 +541,9 @@ static void test_spi_monitor_bus_config_can_select_one_channel(void) {
     assert(bus_status.channel_select_mask == 0x02u);
     assert(status[0].running == false);
     assert(status[1].running == true);
+    assert(status[1].capture == SPI_MONITOR_CAPTURE_MOSI);
+    assert(status[1].spi_mode == 1u);
+    assert(status[1].timeout_us == 900u);
     assert(status[2].running == false);
     assert(status[1].capture == SPI_MONITOR_CAPTURE_MOSI);
     assert(status[1].spi_mode == 1u);
@@ -608,19 +607,19 @@ static void test_spi_monitor_emits_mosi_only_trace_packet(void) {
     trace_ring_init();
     config.capture = SPI_MONITOR_CAPTURE_MOSI;
     config.spi_mode = 1u;
-    config.channel_select_mask = 0x04u;
+    config.channel_select_mask = 0x02u;
     config.timeout_us = 800u;
     raw_words[0] = pack_spi_byte_word(0x5Au, 0xC3u);
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
-    assert(spi_monitor_test_feed_samples(0u, 0x04u, 50u, raw_words, 1u) == true);
+    assert(spi_monitor_test_feed_samples(0u, 0x02u, 50u, raw_words, 1u) == true);
 
     spi_monitor_test_poll_timeout(0u, 900u);
 
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
     assert(packet.header.type == TRACE_TYPE_SPI);
-    assert(packet.header.channel == SPI_MONITOR_CH2_LOGICAL_CHANNEL);
+    assert(packet.header.channel == SPI_MONITOR_CH1_LOGICAL_CHANNEL);
     assert((packet.header.flags & TRACE_FLAG_END) != 0u);
     assert(packet.header.payload_len == 1u);
     assert(packet.header.meta == SPI_MONITOR_CAPTURE_MOSI);
@@ -772,8 +771,8 @@ static void test_spi_monitor_open_transaction_does_not_count_packet_before_ring_
     assert(status[0].packets_emitted == 1u);
 }
 
-/** @brief Verify that an idle CS handoff preserves buffered data until timeout closes the transaction. */
-static void test_spi_monitor_idle_cs_handoff_flushes_completed_buffer(void) {
+/** @brief Verify that words sampled after CS deasserts are dropped instead of extending the transaction. */
+static void test_spi_monitor_idle_cs_handoff_drops_inactive_words(void) {
     spi_monitor_bus_config_t config = {0};
     trace_packet_t packet = {0};
     uint32_t raw_words[1];
@@ -791,16 +790,13 @@ static void test_spi_monitor_idle_cs_handoff_flushes_completed_buffer(void) {
     raw_words[0] = pack_spi_byte_word(0x34u, 0x00u);
     assert(spi_monitor_test_feed_samples(0u, 0x00u, 200u, raw_words, 1u) == true);
 
-    assert(trace_ring_available() == 0u);
-
     spi_monitor_test_poll_timeout(0u, 1500u);
 
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
     assert((packet.header.flags & TRACE_FLAG_END) != 0u);
-    assert(packet.header.payload_len == 2u);
+    assert(packet.header.payload_len == 1u);
     assert(packet.payload[0] == 0x12u);
-    assert(packet.payload[1] == 0x34u);
 }
 
 /** @brief Verify that poll-driven DMA progress emits a short SPI transfer without waiting for a full half-buffer. */
@@ -837,6 +833,50 @@ static void test_spi_monitor_poll_flushes_short_dma_progress(void) {
     assert((packet.header.flags & TRACE_FLAG_END) != 0u);
     assert(packet.header.payload_len == 1u);
     assert(packet.payload[0] == 0x9Au);
+}
+
+/** @brief Verify that same-bus selected channels can retire distinct staged DMA data independently. */
+static void test_spi_monitor_poll_flushes_independent_same_bus_channel_dma_progress(void) {
+    spi_monitor_bus_config_t config = {0};
+    trace_packet_t packet = {0};
+    uint32_t channel0_words[1];
+    uint32_t channel1_words[1];
+
+    reset_real_spi_monitor_state();
+    trace_ring_init();
+    config.capture = SPI_MONITOR_CAPTURE_MOSI;
+    config.spi_mode = 0u;
+    config.channel_select_mask = SPI_MONITOR_CHANNEL_SELECT_ALL;
+    config.timeout_us = 1000u;
+
+    assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
+    channel0_words[0] = pack_spi_byte_word(0x11u, 0x00u);
+    channel1_words[0] = pack_spi_byte_word(0x22u, 0x00u);
+    assert(spi_monitor_test_stage_channel_dma_progress(0u, channel0_words, 1u) == true);
+    assert(spi_monitor_test_stage_channel_dma_progress(1u, channel1_words, 1u) == true);
+
+    stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, false);
+    stub_gpio_set_level(SPI_MONITOR_SPI0_CS1_GPIO, false);
+    stub_time_us32 = 100u;
+    spi_monitor_poll();
+
+    stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, true);
+    stub_gpio_set_level(SPI_MONITOR_SPI0_CS1_GPIO, true);
+    stub_time_us32 = 2000u;
+    spi_monitor_poll();
+
+    assert(trace_ring_available() == 2u);
+    assert(trace_ring_pop_copy(&packet) == true);
+    assert(packet.header.channel == SPI_MONITOR_CH0_LOGICAL_CHANNEL);
+    assert((packet.header.flags & TRACE_FLAG_END) != 0u);
+    assert(packet.header.payload_len == 1u);
+    assert(packet.payload[0] == 0x11u);
+
+    assert(trace_ring_pop_copy(&packet) == true);
+    assert(packet.header.channel == SPI_MONITOR_CH1_LOGICAL_CHANNEL);
+    assert((packet.header.flags & TRACE_FLAG_END) != 0u);
+    assert(packet.header.payload_len == 1u);
+    assert(packet.payload[0] == 0x22u);
 }
 
 /** @brief Verify that sampler overruns are reported at bus scope, not duplicated onto channels. */
@@ -922,6 +962,50 @@ static void test_spi_monitor_poll_timeout_ignores_stale_now_snapshot(void) {
     assert(packet.header.sequence == 1u);
     assert(packet.header.payload_len == 1u);
     assert(packet.payload[0] == 0x6Au);
+}
+
+/** @brief Verify that a latched sampler boundary offset splits same-channel transactions before the next poll. */
+static void test_spi_monitor_boundary_offset_splits_same_channel_transactions(void) {
+    spi_monitor_bus_config_t config = {0};
+    trace_packet_t packet = {0};
+    uint32_t raw_words[2];
+
+    reset_real_spi_monitor_state();
+    trace_ring_init();
+    config.capture = SPI_MONITOR_CAPTURE_MOSI;
+    config.spi_mode = 0u;
+    config.channel_select_mask = 0x01u;
+    config.timeout_us = 1000u;
+    raw_words[0] = pack_spi_byte_word(0x12u, 0x00u);
+    raw_words[1] = pack_spi_byte_word(0x34u, 0x00u);
+
+    assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
+    assert(spi_monitor_test_stage_channel_dma_progress_with_boundary(0u, raw_words, 2u, 1u) == true);
+
+    stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, false);
+    stub_time_us32 = 100u;
+    spi_monitor_poll();
+
+    assert(trace_ring_available() == 1u);
+    assert(trace_ring_pop_copy(&packet) == true);
+    assert(packet.header.channel == SPI_MONITOR_CH0_LOGICAL_CHANNEL);
+    assert((packet.header.flags & TRACE_FLAG_END) != 0u);
+    assert(packet.header.sequence == 1u);
+    assert(packet.header.payload_len == 1u);
+    assert(packet.payload[0] == 0x12u);
+
+    stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, true);
+    stub_gpio_fire_irq(SPI_MONITOR_SPI0_CS0_GPIO, GPIO_IRQ_EDGE_RISE);
+    stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, false);
+    spi_monitor_test_poll_timeout(0u, 1200u);
+
+    assert(trace_ring_available() == 1u);
+    assert(trace_ring_pop_copy(&packet) == true);
+    assert(packet.header.channel == SPI_MONITOR_CH0_LOGICAL_CHANNEL);
+    assert((packet.header.flags & TRACE_FLAG_END) != 0u);
+    assert(packet.header.sequence == 2u);
+    assert(packet.header.payload_len == 1u);
+    assert(packet.payload[0] == 0x34u);
 }
 
 /** @brief Verify that a fragment emitted after mid-transaction overflow still carries CONTINUED. */
@@ -1114,18 +1198,20 @@ static void test_cli_spimon_command_updates_monitor_bus(void) {
     tud_cdc_rx_cb(0u);
     device_cli_poll();
 
+    assert(stub_spi_running[2] == true);
     assert(stub_spi_running[3] == true);
-    assert(stub_spi_running[4] == true);
-    assert(stub_spi_running[5] == true);
     assert(stub_spi_channel_select_mask[1] == SPI_MONITOR_CHANNEL_SELECT_ALL);
-    assert(stub_spi_capture[4] == SPI_MONITOR_CAPTURE_MOSI_MISO);
-    assert(stub_spi_mode[4] == 3u);
-    assert(stub_spi_timeout_us[4] == 2500u);
+    assert(stub_spi_capture[2] == SPI_MONITOR_CAPTURE_MOSI_MISO);
+    assert(stub_spi_capture[3] == SPI_MONITOR_CAPTURE_MOSI_MISO);
+    assert(stub_spi_mode[2] == 3u);
+    assert(stub_spi_mode[3] == 3u);
+    assert(stub_spi_timeout_us[2] == 2500u);
+    assert(stub_spi_timeout_us[3] == 2500u);
     assert(strstr((const char *)stub_cdc_tx_data, "spimon bus1 running select=all capture=both mode=3 timeout_us=2500") != NULL);
 }
 
 static void test_cli_spimon_command_updates_one_selected_channel(void) {
-    static const uint8_t payload[] = {'s','p','i','m','o','n',' ','0',' ','m','o','s','i',' ','2',' ','1',' ','1','5','0','0','\r'};
+    static const uint8_t payload[] = {'s','p','i','m','o','n',' ','0',' ','m','o','s','i',' ','1',' ','1',' ','1','5','0','0','\r'};
 
     reset_usb_stub();
     load_cdc_rx(payload, sizeof(payload));
@@ -1134,10 +1220,9 @@ static void test_cli_spimon_command_updates_one_selected_channel(void) {
     device_cli_poll();
 
     assert(stub_spi_running[0] == false);
-    assert(stub_spi_running[1] == false);
-    assert(stub_spi_running[2] == true);
-    assert(stub_spi_channel_select_mask[0] == 0x04u);
-    assert(strstr((const char *)stub_cdc_tx_data, "spimon bus0 running select=ch2 capture=mosi mode=1 timeout_us=1500") != NULL);
+    assert(stub_spi_running[1] == true);
+    assert(stub_spi_channel_select_mask[0] == 0x02u);
+    assert(strstr((const char *)stub_cdc_tx_data, "spimon bus0 running select=ch1 capture=mosi mode=1 timeout_us=1500") != NULL);
 }
 
 static void test_cli_spimon_status_reports_bus_state(void) {
@@ -1152,6 +1237,7 @@ static void test_cli_spimon_status_reports_bus_state(void) {
     stub_spi_running[0] = true;
     stub_spi_running[1] = false;
     stub_spi_running[2] = false;
+    stub_spi_running[3] = false;
     stub_spi_capture[0] = SPI_MONITOR_CAPTURE_MOSI;
     stub_spi_mode[0] = 0u;
     stub_spi_timeout_us[0] = 1200u;
@@ -1677,13 +1763,15 @@ static void test_hid_spi_monitor_set_config_updates_bus(void) {
     tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
     usb_hid_poll();
 
+    assert(stub_spi_running[2] == true);
     assert(stub_spi_running[3] == true);
-    assert(stub_spi_running[4] == true);
-    assert(stub_spi_running[5] == true);
     assert(stub_spi_channel_select_mask[1] == SPI_MONITOR_CHANNEL_SELECT_ALL);
-    assert(stub_spi_capture[4] == SPI_MONITOR_CAPTURE_MOSI_MISO);
-    assert(stub_spi_mode[4] == 3u);
-    assert(stub_spi_timeout_us[4] == 2500u);
+    assert(stub_spi_capture[2] == SPI_MONITOR_CAPTURE_MOSI_MISO);
+    assert(stub_spi_capture[3] == SPI_MONITOR_CAPTURE_MOSI_MISO);
+    assert(stub_spi_mode[2] == 3u);
+    assert(stub_spi_mode[3] == 3u);
+    assert(stub_spi_timeout_us[2] == 2500u);
+    assert(stub_spi_timeout_us[3] == 2500u);
     assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
     assert(response.opcode == USB_HID_OPCODE_SPI_MONITOR_SET_CONFIG);
     assert(response.status == USB_HID_STATUS_OK);
@@ -1725,14 +1813,13 @@ static void test_hid_spi_monitor_get_status_returns_bus_payload(void) {
     stub_spi_bus_mode[1] = 2u;
     stub_spi_bus_timeout_us[1] = 1800u;
     stub_spi_channel_select_mask[1] = 0x01u;
-    stub_spi_running[3] = true;
-    stub_spi_running[4] = false;
-    stub_spi_running[5] = false;
-    stub_spi_capture[3] = SPI_MONITOR_CAPTURE_MOSI;
-    stub_spi_mode[3] = 2u;
-    stub_spi_timeout_us[3] = 1800u;
-    stub_spi_packets_emitted[3] = 7u;
-    stub_spi_overrun_count[3] = 3u;
+    stub_spi_running[2] = true;
+    stub_spi_running[3] = false;
+    stub_spi_capture[2] = SPI_MONITOR_CAPTURE_MOSI;
+    stub_spi_mode[2] = 2u;
+    stub_spi_timeout_us[2] = 1800u;
+    stub_spi_packets_emitted[2] = 7u;
+    stub_spi_overrun_count[2] = 3u;
     command.opcode = USB_HID_OPCODE_SPI_MONITOR_GET_STATUS;
     command.sequence = 13u;
     command.payload_length = 1u;
@@ -1772,28 +1859,20 @@ static void test_hid_spi_monitor_get_all_status_returns_all_channels(void) {
     stub_spi_running[0] = true;
     stub_spi_running[1] = true;
     stub_spi_running[2] = true;
+    stub_spi_running[3] = true;
     stub_spi_capture[0] = SPI_MONITOR_CAPTURE_MOSI;
     stub_spi_capture[1] = SPI_MONITOR_CAPTURE_MOSI;
-    stub_spi_capture[2] = SPI_MONITOR_CAPTURE_MOSI;
+    stub_spi_capture[2] = SPI_MONITOR_CAPTURE_MOSI_MISO;
+    stub_spi_capture[3] = SPI_MONITOR_CAPTURE_MOSI_MISO;
     stub_spi_mode[0] = 0u;
     stub_spi_mode[1] = 0u;
-    stub_spi_mode[2] = 0u;
+    stub_spi_mode[2] = 3u;
+    stub_spi_mode[3] = 3u;
     stub_spi_timeout_us[0] = 1000u;
     stub_spi_timeout_us[1] = 1000u;
-    stub_spi_timeout_us[2] = 1000u;
-    stub_spi_running[3] = true;
-    stub_spi_running[4] = true;
-    stub_spi_running[5] = true;
-    stub_spi_capture[3] = SPI_MONITOR_CAPTURE_MOSI_MISO;
-    stub_spi_capture[4] = SPI_MONITOR_CAPTURE_MOSI_MISO;
-    stub_spi_capture[5] = SPI_MONITOR_CAPTURE_MOSI_MISO;
-    stub_spi_mode[3] = 3u;
-    stub_spi_mode[4] = 3u;
-    stub_spi_mode[5] = 3u;
+    stub_spi_timeout_us[2] = 2500u;
     stub_spi_timeout_us[3] = 2500u;
-    stub_spi_timeout_us[4] = 2500u;
-    stub_spi_timeout_us[5] = 2500u;
-    stub_spi_overrun_count[3] = 1u;
+    stub_spi_overrun_count[2] = 1u;
     command.opcode = USB_HID_OPCODE_SPI_MONITOR_GET_ALL_STATUS;
     command.sequence = 14u;
 
@@ -1803,7 +1882,7 @@ static void test_hid_spi_monitor_get_all_status_returns_all_channels(void) {
     assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
     assert(response.opcode == USB_HID_OPCODE_SPI_MONITOR_GET_ALL_STATUS);
     assert(response.status == USB_HID_STATUS_OK);
-    assert(response.payload_length == 60u);
+    assert(response.payload_length == 40u);
     assert(response.payload[0] == 0u);
     assert(response.payload[2] == 1u);
     assert(response.payload[3] == SPI_MONITOR_CAPTURE_MOSI);
@@ -1817,7 +1896,7 @@ static void test_hid_spi_monitor_get_all_status_returns_all_channels(void) {
     assert(response.payload[34] == 3u);
     assert(response.payload[35] == 0xC4u);
     assert(response.payload[36] == 0x09u);
-    assert(response.payload[39] == 1u);
+    assert(response.payload[39] == 0u);
 }
 
 static void test_hid_spi_monitor_get_all_status_rejects_failed_snapshot(void) {
@@ -1852,11 +1931,13 @@ int main(void) {
     test_spi_monitor_reconfig_failure_leaves_bus_stopped();
     test_spi_monitor_invalid_reconfig_does_not_flush_transaction();
     test_spi_monitor_open_transaction_does_not_count_packet_before_ring_push();
-    test_spi_monitor_idle_cs_handoff_flushes_completed_buffer();
+    test_spi_monitor_idle_cs_handoff_drops_inactive_words();
     test_spi_monitor_poll_flushes_short_dma_progress();
+    test_spi_monitor_poll_flushes_independent_same_bus_channel_dma_progress();
     test_spi_monitor_directional_overruns_are_aggregated_in_status();
     test_spi_monitor_poll_timeout_refreshes_channel_overrun_status();
     test_spi_monitor_poll_timeout_ignores_stale_now_snapshot();
+    test_spi_monitor_boundary_offset_splits_same_channel_transactions();
     test_spi_monitor_overflow_preserves_continued_for_same_transaction();
     test_cli_unknown_command_writes_fixed_helper();
     test_cli_help_writes_response_without_connected_flag();

@@ -53,14 +53,14 @@ The control boundary is per observed SPI bus, not per logical channel. Each star
 also choose which observed `CS_N` slots on that bus are eligible for capture:
 
 - one specific channel on that bus
-- all three observed channels on that bus
+- all two observed channels on that bus
 
 This prevents a floating or unconnected active-low `CS_N` input from permanently looking selected
 and contaminating packet ownership for unrelated traffic on the same bus.
 
 ## Hardware Mapping Assumption
 
-The current board mapping exposes two observed SPI buses and three observed `CS_N` inputs per bus
+The current board mapping exposes two observed SPI buses and two observed `CS_N` inputs per bus
 as documented in `docs/hardware-connections.md`.
 
 Important implication:
@@ -68,13 +68,13 @@ Important implication:
 - `SCLK`, `MOSI`, and optional `MISO` are bus-level signals
 - `CS_N` selects the logical channel within that bus
 
-That means the capture implementation should treat SPI sampling as bus-owned, then route completed
-transaction bytes to the logical channel identified by the active `CS_N` input.
+That means the capture implementation should keep bus-wide control semantics but treat capture
+ownership as `bus + cs_slot`, not as one undifferentiated bus sampler.
 
 The current logical channel map is:
 
-- `0x00` to `0x02` for `spi0` `cs_slot` 0 to 2
-- `0x03` to `0x05` for `spi1` `cs_slot` 0 to 2
+- `0x00` to `0x01` for `spi0` `cs_slot` 0 to 1
+- `0x02` to `0x03` for `spi1` `cs_slot` 0 to 1
 
 ## Capture Trigger
 
@@ -85,102 +85,100 @@ The SPI clock, not a free-running oversample rate, is the capture trigger for th
 The implementation should interpret edges according to the selected SPI mode so that the sampler
 uses the correct shift edge and capture edge for modes 0 through 3.
 
-## Bus Ownership Model
+## Capture Ownership Model
 
-The natural ownership boundary is one sampler per observed SPI bus, not one sampler per logical
-channel.
+The updated ownership boundary is one sampler per observed `CS_N` slot, not one sampler per whole
+observed SPI bus.
 
 Reason:
 
-- all logical channels on one observed SPI bus share the same `SCLK`
-- all logical channels on one observed SPI bus share the same `MOSI`
-- optional `MISO` is also shared at the bus level
-- only `CS_N` distinguishes which logical channel owns a transaction
+- same-bus multi-channel capture needs exact ownership at the moment the target `CS_N` is active
+- `SCLK`, `MOSI`, and optional `MISO` are still shared electrically at the bus level
+- `CS_N` is the only valid hardware gate that says whether one logical channel should capture data
+- continuous bus-owned sampling followed by later `CS_N` attribution is no longer sufficient for
+  the target behavior
 
-The future implementation should therefore maintain per-bus capture state and per-logical-channel
-trace packet state.
+The intended implementation should therefore maintain:
 
-The current implementation now follows that ownership model directly:
+- bus-wide control state for `spi_mode`, capture direction, timeout, and enablement policy
+- one PIO state machine per observed `CS_N` slot
+- one DMA ring per observed `CS_N` slot
+- one active packet builder per observed `CS_N` slot
 
-- one DMA-backed raw sampler runs per observed SPI bus
-- that raw bus stream carries only sampled `MOSI` and `MISO` bit pairs while `SCLK` only gates capture
-- software extracts MOSI and optional MISO bytes directly from each completed raw bus word
-- one live packet builder is owned by the active bus transaction rather than by every logical
-  channel all the time
+For the current RP2040 target, this design is intentionally paired with only two `CS_N` slots per
+observed bus so the state-machine budget remains practical.
+
+## CS Gating Rule
+
+The sampler must not shift any SPI data unless its own observed `CS_N` input is active.
+
+That rule is mandatory for the updated design.
+
+More concretely:
+
+- when a sampler's `CS_N` is deasserted, that sampler must remain idle
+- `SCLK` edges seen while that `CS_N` is deasserted must not generate sampled words for that stream
+- a sampler may begin shifting only after its own `CS_N` becomes active
+- a sampler must stop shifting immediately when its own `CS_N` deasserts
+
+This is the key design change relative to the earlier bus-owned continuous sampler model.
+
+The intended PIO behavior is therefore `CS_N`-gated and `SCLK`-clocked:
+
+- `CS_N` active is the admission condition
+- `SCLK` edges define when bits are shifted
+- `MOSI` and optional `MISO` remain the sampled payload inputs
 
 ## Transaction Boundary Rules
 
-The active `CS_N` line determines which logical channel a sampled SPI byte belongs to.
+Each observed `CS_N` slot owns its own logical SPI stream.
 
 The transaction should end when either of these conditions occurs:
 
-- the active `CS_N` deasserts
-- another observed `CS_N` becomes active
+- that stream's `CS_N` deasserts
 - an inter-byte timeout expires while a transaction is open
 
-For this design, a `CS_N` change or timeout is treated as the end of the current logical packet.
-When the handoff view of `CS_N` is idle, the current logical transaction is considered finished and
-the monitor should close and emit the accumulated packet fragment sequence for that transaction.
+For this design, `CS_N` deassertion or timeout is treated as the end of the current logical packet.
+When the observed `CS_N` is idle, the current logical transaction for that stream is considered
+finished and the monitor should close and emit the accumulated packet fragment sequence for that
+transaction.
 
-If more than one observed `CS_N` is active at once, that should be treated as an error boundary and
-the current packet should be closed before capture resumes from the next clean selection state.
+If more than one observed `CS_N` is active at once, that is no longer a bus-ownership conflict in
+this design because each observed stream owns its own sampler and DMA ring.
 
-## Current `CS_N` Attribution Model
+In that case:
 
-The current PicoTrace SPI monitor is intentionally optimized for the common controller-driven SPI
-transaction model:
+- each active selected stream may continue to sample while its own `CS_N` remains asserted
+- `CS_N` deassertion still closes only that stream's transaction
+- overlap does not by itself require `TRACE_FLAG_ERROR`
 
-- one asserted `CS_N` usually corresponds to one logical transaction
-- `CS_N` changes usually occur at a transaction boundary
-- that boundary usually comes with a visible clock pause or idle gap
+## Redesign Motivation
 
-That is the situation PicoTrace is currently designed around.
-
-The present implementation samples bus data continuously but attributes `CS_N` ownership at DMA
-half-buffer handoff rather than on every sampled SPI bit. In the common case above, that is an
-acceptable simplification because the next transaction normally starts after the `CS_N` boundary,
-so the handoff view still matches the logical transaction split seen by the controller.
-
-In other words, an idle `CS_N` sample at handoff is the current end-of-transaction signal for the
-open session on that bus. The monitor should attribute the just-completed handoff buffer to the
-currently open logical transaction, then flush the accumulated packet content for that transaction
-rather than waiting for any stronger delimiter.
-
-## Current Design Limitation
-
-PicoTrace does not currently guarantee exact attribution for the corner case where:
-
-- `CS_N` changes inside one DMA half-buffer
-- the controller does not leave a reliable clock gap at that boundary
-- meaningful clocked data continues closely enough that half-buffer attribution can merge or
-  mis-assign bytes around the transition
-
-This corner case is intentionally out of scope for the current SPI monitor design.
-
-That tradeoff keeps the monitor small and aligned with PicoTrace's main target: low-cost passive
-capture of common SPI traffic patterns rather than exhaustive support for every possible master-side
-timing behavior.
-
-If future target systems require exact attribution across back-to-back `CS_N` changes without a
-usable idle gap, the correct upgrade path is to sample `CS_N` history directly in the raw capture
-stream and decode those transitions in software instead of inferring ownership only at buffer
+The earlier bus-owned continuous sampler model was optimized for the common case where one asserted
+`CS_N` maps cleanly to one transaction and there is enough idle gap to infer ownership at DMA
 handoff.
+
+That is no longer the target design.
+
+The updated design explicitly removes that dependency by ensuring that each logical SPI stream only
+captures data while its own `CS_N` is active. This avoids the earlier ambiguity where back-to-back
+same-bus `CS_N` changes could merge or mis-assign bytes inside one DMA half-buffer.
 
 ## Packet Assembly Rules
 
-The active transaction on one observed SPI bus should own the live `trace_packet_t` assembly buffer
-for the current transaction.
+The active transaction on one observed `bus + cs_slot` stream should own the live `trace_packet_t`
+assembly buffer for the current transaction.
 
 When sampled bytes are attributed to a logical channel:
 
-- append the received SPI data to the active transaction packet currently attributed to that logical channel
+- append the received SPI data to the active transaction packet currently owned by that logical channel
 - keep the packet open while the same transaction continues
 - when the current transaction ends, emit the accumulated packet fragment sequence into the shared `trace_ring`
-- treat `CS_N` observed idle at handoff as one of those end-of-transaction signals
+- treat `CS_N` deassertion as one of those end-of-transaction signals
 
-When the current SPI monitor session on that bus is closed normally, such as an explicit stop or a
-stop-first reconfiguration while a transaction is open, the monitor should also close and emit the
-accumulated fragment sequence for that open transaction before resetting the bus-owned runtime.
+When the current SPI monitor session on that stream is closed normally, such as an explicit stop or
+a stop-first reconfiguration while a transaction is open, the monitor should also close and emit the
+accumulated fragment sequence for that open transaction before resetting the stream-owned runtime.
 
 If appending more received bytes would grow the current fragment past `TRACE_PACKET_PAYLOAD_BYTES`,
 the implementation should immediately emit the current fragment into the shared `trace_ring` and
@@ -205,7 +203,8 @@ The packet header fields currently mean:
   - `TRACE_FLAG_END` closes a logical transaction
   - `TRACE_FLAG_CONTINUED` marks a fragment that continues an earlier transaction
   - `TRACE_FLAG_OVERFLOW` marks a fragment that follows dropped output
-  - `TRACE_FLAG_ERROR` marks an error boundary such as conflicting active `CS_N` selection
+  - `TRACE_FLAG_ERROR` remains reserved for future SPI decode or capture fault signaling, but is
+    not used merely because two selected `CS_N` inputs are active at the same time
 - `payload_len =` the number of valid payload bytes in the fragment
 - `meta =` the configured capture mode for that fragment:
   - `SPI_MONITOR_CAPTURE_MOSI` for MOSI-only capture
@@ -302,7 +301,23 @@ This is the smallest SPI monitor design that fits the current PicoTrace architec
 
 - disabled by default at boot
 - explicit host-controlled start and stop
-- shared bus capture with logical-channel routing by `CS_N`
-- packet termination on `CS_N` change or timeout
+- bus-wide control with per-`CS_N` capture ownership
+- no sampling when `CS_N` is inactive
+- packet termination on `CS_N` deassertion or timeout
 - immediate fragment push at `TRACE_PACKET_PAYLOAD_BYTES`
 - no requirement for a large per-transaction temporary buffer
+
+## Implementation Note
+
+At the time of this design update, the checked-in firmware implementation still reflects the older
+bus-owned continuous sampler in `firmware/src/trace/capture/spi_monitor.c` and
+`firmware/src/trace/capture/spi_monitor.pio`.
+
+This document describes the intended replacement design:
+
+- two observed `CS_N` slots per bus
+- one sampler and DMA path per `CS_N` slot
+- no sampling while `CS_N` is inactive
+
+The implementation should be updated to match this design rather than treating the previous
+continuous-sampling behavior as authoritative.

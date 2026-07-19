@@ -22,7 +22,7 @@ headers.
 Important board constraint:
 
 - `GPIO23`, `GPIO24`, and `GPIO25` are not available on the standard Pico/Pico 2 header and should
-	not be used in the board pin allocation
+  not be used in the board pin allocation
 
 ## Scope
 
@@ -40,7 +40,7 @@ For a concrete Raspberry Pi bench hookup built on top of this allocation, see
 
 ## SPI Allocation
 
-The current SPI allocation supports observation of up to two SPI buses, with up to three observed
+The current SPI allocation supports observation of up to two SPI buses, with up to two observed
 `CS_N` lines per bus.
 
 | Pico/Pico 2 Header Pin | GPIO | Signal | Notes |
@@ -50,13 +50,11 @@ The current SPI allocation supports observation of up to two SPI buses, with up 
 | `6` | `GPIO4` | `SPI0_MISO` | optional SPI bus 0 peripheral-to-controller data input |
 | `7` | `GPIO5` | `SPI0_CS_N0` | first observed transaction boundary input on SPI bus 0 |
 | `9` | `GPIO6` | `SPI0_CS_N1` | second observed chip-select input on SPI bus 0 |
-| `10` | `GPIO7` | `SPI0_CS_N2` | third observed chip-select input on SPI bus 0 |
-| `11` | `GPIO8` | `SPI1_CS_N0` | first observed transaction boundary input on SPI bus 1 |
-| `12` | `GPIO9` | `SPI1_CS_N1` | second observed chip-select input on SPI bus 1 |
-| `14` | `GPIO10` | `SPI1_CS_N2` | third observed chip-select input on SPI bus 1 |
-| `15` | `GPIO11` | `SPI1_SCLK` | SPI bus 1 clock input |
-| `16` | `GPIO12` | `SPI1_MOSI` | SPI bus 1 controller-to-peripheral data input |
-| `17` | `GPIO13` | `SPI1_MISO` | optional SPI bus 1 peripheral-to-controller data input |
+| `10` | `GPIO7` | `SPI1_CS_N0` | first observed transaction boundary input on SPI bus 1 |
+| `11` | `GPIO8` | `SPI1_CS_N1` | second observed chip-select input on SPI bus 1 |
+| `12` | `GPIO9` | `SPI1_SCLK` | SPI bus 1 clock input |
+| `14` | `GPIO10` | `SPI1_MOSI` | SPI bus 1 controller-to-peripheral data input |
+| `15` | `GPIO11` | `SPI1_MISO` | optional SPI bus 1 peripheral-to-controller data input |
 
 These are the recommended board allocations.
 
@@ -100,15 +98,17 @@ contiguous 8-pin window.
 
 Using the allocation above:
 
-- `GPIO2` through `GPIO13` are assigned to SPI observation
+- `GPIO2` through `GPIO11` are assigned to SPI observation
 - `GPIO16` through `GPIO21` plus `GPIO26` and `GPIO27` are assigned to I2C observation
 
-That uses `20` board-accessible GPIOs for protocol observation.
+That uses `18` board-accessible GPIOs for protocol observation.
 
 Unassigned header-accessible GPIOs are:
 
 - `GPIO0`
 - `GPIO1`
+- `GPIO12`
+- `GPIO13`
 - `GPIO14`
 - `GPIO15`
 - `GPIO22`
@@ -121,20 +121,18 @@ Recommended reservation:
 
 ## Logical Channel Map
 
-The current allocation exposes `10` logical capture channels over the shared host-control model.
+The current allocation exposes `8` logical capture channels over the shared host-control model.
 
 | `channel_id` | Protocol | Wiring Group | Local Slot | GPIOs |
 | --- | --- | --- | --- | --- |
 | `0x00` | SPI | `spi0` | `cs_slot = 0` | `SCLK=GPIO2`, `MOSI=GPIO3`, `MISO=GPIO4`, `CS_N=GPIO5` |
 | `0x01` | SPI | `spi0` | `cs_slot = 1` | `SCLK=GPIO2`, `MOSI=GPIO3`, `MISO=GPIO4`, `CS_N=GPIO6` |
-| `0x02` | SPI | `spi0` | `cs_slot = 2` | `SCLK=GPIO2`, `MOSI=GPIO3`, `MISO=GPIO4`, `CS_N=GPIO7` |
-| `0x03` | SPI | `spi1` | `cs_slot = 0` | `SCLK=GPIO11`, `MOSI=GPIO12`, `MISO=GPIO13`, `CS_N=GPIO8` |
-| `0x04` | SPI | `spi1` | `cs_slot = 1` | `SCLK=GPIO11`, `MOSI=GPIO12`, `MISO=GPIO13`, `CS_N=GPIO9` |
-| `0x05` | SPI | `spi1` | `cs_slot = 2` | `SCLK=GPIO11`, `MOSI=GPIO12`, `MISO=GPIO13`, `CS_N=GPIO10` |
-| `0x06` | I2C | `i2c0` | primary pair | `SDA=GPIO16`, `SCL=GPIO17` |
-| `0x07` | I2C | `i2c1` | primary pair | `SDA=GPIO18`, `SCL=GPIO19` |
-| `0x08` | I2C | `i2c2` | primary pair | `SDA=GPIO20`, `SCL=GPIO21` |
-| `0x09` | I2C | `i2c3` | primary pair | `SDA=GPIO26`, `SCL=GPIO27` |
+| `0x02` | SPI | `spi1` | `cs_slot = 0` | `SCLK=GPIO9`, `MOSI=GPIO10`, `MISO=GPIO11`, `CS_N=GPIO7` |
+| `0x03` | SPI | `spi1` | `cs_slot = 1` | `SCLK=GPIO9`, `MOSI=GPIO10`, `MISO=GPIO11`, `CS_N=GPIO8` |
+| `0x04` | I2C | `i2c0` | primary pair | `SDA=GPIO16`, `SCL=GPIO17` |
+| `0x05` | I2C | `i2c1` | primary pair | `SDA=GPIO18`, `SCL=GPIO19` |
+| `0x06` | I2C | `i2c2` | primary pair | `SDA=GPIO20`, `SCL=GPIO21` |
+| `0x07` | I2C | `i2c3` | primary pair | `SDA=GPIO26`, `SCL=GPIO27` |
 
 This table is the board-level bridge between Pico/Pico 2 header wiring and PicoTrace logical
 channel selection.
