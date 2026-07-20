@@ -23,6 +23,11 @@ typedef enum {
 	I2C_MONITOR_RC_FAILED = 4u,
 } i2c_monitor_rc_t;
 
+/** @brief Requested runtime configuration for one observed I2C channel. */
+typedef struct {
+	uint32_t sample_hz; /**< Oversampling rate in Hz, or `0` to stop sampling. */
+} i2c_monitor_channel_config_t;
+
 /** @brief Snapshot of one monitor channel state. */
 typedef struct {
 	bool initialized; /**< Indicates whether the monitor shared resources were initialized. */
@@ -39,7 +44,7 @@ typedef struct {
  * @brief Initialize the shared I2C sampler resources.
  *
  * This function installs the PIO program, prepares the DMA IRQ handler, and leaves every channel
- * stopped until @ref i2c_monitor_set_channel_sample_hz is called with a non-zero sample rate.
+ * stopped until @ref i2c_monitor_set_channel_config is called with a non-zero sample rate.
  * It is idempotent. Repeated calls after successful initialization have no effect.
  * Repeated calls after a failed initialization return @ref I2C_MONITOR_RC_FAILED without retrying.
  * @return Control result describing whether setup succeeded or failed.
@@ -62,7 +67,7 @@ void i2c_monitor_poll(void);
 /**
  * @brief Start or stop one monitor channel.
  * @param channel Zero-based monitor channel index.
- * @param sample_hz Oversampling rate in Hz, or `0` to stop sampling and reset the channel state.
+ * @param config Caller-owned channel configuration.
  * @return Control result describing whether the request was applied, blocked by a pending
  * transition, rejected because streaming is disabled, or invalid/failed.
  *
@@ -73,7 +78,7 @@ void i2c_monitor_poll(void);
  * This API is owned by the producer core that initialized the monitor. Callers on other cores must
  * route requests onto that core instead of touching the monitor directly.
  */
-i2c_monitor_rc_t i2c_monitor_set_channel_sample_hz(uint32_t channel, uint32_t sample_hz);
+i2c_monitor_rc_t i2c_monitor_set_channel_config(uint32_t channel, const i2c_monitor_channel_config_t *config);
 
 /**
  * @brief Read the current state of one monitor channel.

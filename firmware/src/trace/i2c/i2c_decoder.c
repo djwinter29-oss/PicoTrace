@@ -7,7 +7,7 @@
  * events through a caller-provided callback.
  */
 
-#include "trace/decode/i2c_decoder.h"
+#include "trace/i2c/i2c_decoder.h"
 
 #include <stdbool.h>
 #include <stdint.h>

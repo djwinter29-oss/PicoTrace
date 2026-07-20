@@ -3,7 +3,7 @@
  * @brief SPI capture scaffold with DMA-backed per-channel sampling.
  */
 
-#include "trace/capture/spi_monitor.h"
+#include "trace/spi/spi_monitor.h"
 
 #include <stdbool.h>
 #include <stddef.h>

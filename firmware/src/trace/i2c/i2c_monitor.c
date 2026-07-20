@@ -7,7 +7,7 @@
  * decoded events into the shared trace ring.
  */
 
-#include "trace/capture/i2c_monitor.h"
+#include "trace/i2c/i2c_monitor.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -24,8 +24,8 @@
 
 #include "app_control.h"
 #include "config/i2c_monitor_config.h"
-#include "trace/decode/i2c_decoder.h"
-#include "trace/decode/i2c_trace_packet.h"
+#include "trace/i2c/i2c_decoder.h"
+#include "trace/i2c/i2c_trace_packet.h"
 #include "trace/trace_ring.h"
 
 #include "i2c_monitor.pio.h"
@@ -739,12 +739,15 @@ bool i2c_monitor_needs_poll(void) {
     return g_i2c_monitor_initialized && !g_i2c_monitor_init_failed && (g_i2c_monitor_poll_channel_mask != 0u);
 }
 
-i2c_monitor_rc_t i2c_monitor_set_channel_sample_hz(uint32_t channel, uint32_t sample_hz) {
+i2c_monitor_rc_t i2c_monitor_set_channel_config(uint32_t channel, const i2c_monitor_channel_config_t *config) {
     i2c_monitor_channel_state_t *channel_state = i2c_monitor_get_channel_state(channel);
+    uint32_t sample_hz;
 
-    if ((channel_state == NULL) || !g_i2c_monitor_initialized || g_i2c_monitor_init_failed) {
+    if ((channel_state == NULL) || (config == NULL) || !g_i2c_monitor_initialized || g_i2c_monitor_init_failed) {
         return I2C_MONITOR_RC_INVALID;
     }
+
+    sample_hz = config->sample_hz;
 
     if (i2c_monitor_transition_pending(channel_state)) {
         return I2C_MONITOR_RC_BUSY;

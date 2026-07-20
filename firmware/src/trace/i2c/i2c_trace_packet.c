@@ -3,7 +3,7 @@
  * @brief Helpers for packing decoded I2C events into fixed trace packets.
  */
 
-#include "trace/decode/i2c_trace_packet.h"
+#include "trace/i2c/i2c_trace_packet.h"
 
 #include <stddef.h>
 #include <string.h>

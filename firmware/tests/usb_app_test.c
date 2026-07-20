@@ -12,12 +12,12 @@
 #include "cli/device_cli.h"
 #include "driver/system.h"
 #include "test_support.h"
-#include "trace/capture/i2c_monitor_control.h"
-#include "trace/capture/spi_monitor.h"
-#include "trace/capture/spi_monitor_control.h"
+#include "trace/i2c/i2c_monitor_control.h"
+#include "trace/spi/spi_monitor.h"
+#include "trace/spi/spi_monitor_control.h"
 #include "spi_monitor_test_hooks.h"
-#include "trace/decode/i2c_decoder_test.h"
-#include "trace/decode/i2c_trace_packet_test.h"
+#include "trace/i2c/i2c_decoder_test.h"
+#include "trace/i2c/i2c_trace_packet_test.h"
 #include "trace/trace_ring.h"
 #include "usb/usb_cdc.h"
 #include "usb/usb_bulk.h"
@@ -159,7 +159,15 @@ void led_set(bool on) {
     stub_led_set_calls += 1u;
 }
 
-static i2c_monitor_rc_t stub_monitor_set_channel_sample_hz(uint32_t channel, uint32_t sample_hz) {
+static i2c_monitor_rc_t stub_monitor_set_channel_config(uint32_t channel, const i2c_monitor_channel_config_t *config) {
+    uint32_t sample_hz;
+
+    if (config == NULL) {
+        return I2C_MONITOR_RC_INVALID;
+    }
+
+    sample_hz = config->sample_hz;
+
     if (stub_monitor_result != I2C_MONITOR_RC_OK) {
         return stub_monitor_result;
     }
@@ -349,7 +357,7 @@ void reset_usb_stub(void) {
     i2c_monitor_control_init();
     spi_monitor_control_init();
     i2c_monitor_control_bind_executor(
-        stub_monitor_set_channel_sample_hz,
+        stub_monitor_set_channel_config,
         stub_monitor_get_channel_status,
         stub_monitor_get_all_status
     );

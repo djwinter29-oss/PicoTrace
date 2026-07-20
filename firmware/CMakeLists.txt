@@ -19,12 +19,12 @@ add_executable(picotrace
     src/main.c
     src/driver/led.c
     src/driver/system.c
-    src/trace/decode/i2c_decoder.c
-    src/trace/decode/i2c_trace_packet.c
-    src/trace/capture/i2c_monitor.c
-    src/trace/capture/i2c_monitor_control.c
-    src/trace/capture/spi_monitor.c
-    src/trace/capture/spi_monitor_control.c
+    src/trace/i2c/i2c_decoder.c
+    src/trace/i2c/i2c_trace_packet.c
+    src/trace/i2c/i2c_monitor.c
+    src/trace/i2c/i2c_monitor_control.c
+    src/trace/spi/spi_monitor.c
+    src/trace/spi/spi_monitor_control.c
     src/trace/trace_ring.c
     src/usb/usb_bulk.c
     src/usb/usb_cdc.c
@@ -53,8 +53,8 @@ target_link_libraries(picotrace
 
 target_compile_definitions(picotrace PRIVATE PICOTRACE_FIRMWARE_VERSION="${PICOTRACE_FIRMWARE_VERSION}")
 
-pico_generate_pio_header(picotrace ${CMAKE_CURRENT_LIST_DIR}/src/trace/capture/i2c_monitor.pio)
-pico_generate_pio_header(picotrace ${CMAKE_CURRENT_LIST_DIR}/src/trace/capture/spi_monitor.pio)
+pico_generate_pio_header(picotrace ${CMAKE_CURRENT_LIST_DIR}/src/trace/i2c/i2c_monitor.pio)
+pico_generate_pio_header(picotrace ${CMAKE_CURRENT_LIST_DIR}/src/trace/spi/spi_monitor.pio)
 
 if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(picotrace PRIVATE

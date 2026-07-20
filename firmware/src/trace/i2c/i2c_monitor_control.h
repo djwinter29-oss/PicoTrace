@@ -9,20 +9,23 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "trace/capture/i2c_monitor.h"
+#include "trace/i2c/i2c_monitor.h"
 
-typedef i2c_monitor_rc_t (*i2c_monitor_control_set_channel_fn)(uint32_t channel, uint32_t sample_hz);
+typedef i2c_monitor_rc_t (*i2c_monitor_control_set_channel_config_fn)(
+    uint32_t channel,
+    const i2c_monitor_channel_config_t *config
+);
 typedef i2c_monitor_rc_t (*i2c_monitor_control_get_status_fn)(uint32_t channel, i2c_monitor_channel_status_t *status_out);
 typedef i2c_monitor_rc_t (*i2c_monitor_control_get_all_status_fn)(i2c_monitor_channel_status_t *status_out);
 
 void i2c_monitor_control_init(void);
 void i2c_monitor_control_bind_executor(
-    i2c_monitor_control_set_channel_fn set_channel_fn,
+    i2c_monitor_control_set_channel_config_fn set_channel_config_fn,
     i2c_monitor_control_get_status_fn get_status_fn,
     i2c_monitor_control_get_all_status_fn get_all_status_fn
 );
 void i2c_monitor_control_set_inline_mode(bool enabled);
-i2c_monitor_rc_t i2c_monitor_control_set_channel_sample_hz(uint32_t channel, uint32_t sample_hz);
+i2c_monitor_rc_t i2c_monitor_control_set_channel_config(uint32_t channel, const i2c_monitor_channel_config_t *config);
 i2c_monitor_rc_t i2c_monitor_control_get_channel_status(uint32_t channel, i2c_monitor_channel_status_t *status_out);
 i2c_monitor_rc_t i2c_monitor_control_get_all_status(i2c_monitor_channel_status_t *status_out);
 bool i2c_monitor_control_poll(void);

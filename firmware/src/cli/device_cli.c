@@ -10,8 +10,8 @@
 #include <string.h>
 
 #include "app_control.h"
-#include "trace/capture/i2c_monitor_control.h"
-#include "trace/capture/spi_monitor_control.h"
+#include "trace/i2c/i2c_monitor_control.h"
+#include "trace/spi/spi_monitor_control.h"
 
 /** @brief Write the CLI help text. */
 static bool device_cli_help(int argc, const char *const *argv);
@@ -153,6 +153,7 @@ static bool device_cli_help(int argc, const char *const *argv) {
 
 /** @copydoc device_cli_i2cmon */
 static bool device_cli_i2cmon(int argc, const char *const *argv) {
+    i2c_monitor_channel_config_t config;
     i2c_monitor_channel_status_t status;
     i2c_monitor_rc_t result;
     uint32_t channel;
@@ -168,7 +169,8 @@ static bool device_cli_i2cmon(int argc, const char *const *argv) {
         }
 
         if (device_cli_parse_u32(argv[1], &channel) && device_cli_parse_u32(argv[2], &sample_hz)) {
-            result = i2c_monitor_control_set_channel_sample_hz(channel, sample_hz);
+            config.sample_hz = sample_hz;
+            result = i2c_monitor_control_set_channel_config(channel, &config);
             if (result != I2C_MONITOR_RC_OK) {
                 if (result == I2C_MONITOR_RC_BUSY) {
                     return cli_shell_write_line("i2cmon busy");

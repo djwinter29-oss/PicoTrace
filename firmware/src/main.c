@@ -13,10 +13,10 @@
 #include "cli/device_cli.h"
 #include "driver/led.h"
 #include "driver/system.h"
-#include "trace/capture/i2c_monitor.h"
-#include "trace/capture/i2c_monitor_control.h"
-#include "trace/capture/spi_monitor.h"
-#include "trace/capture/spi_monitor_control.h"
+#include "trace/i2c/i2c_monitor.h"
+#include "trace/i2c/i2c_monitor_control.h"
+#include "trace/spi/spi_monitor.h"
+#include "trace/spi/spi_monitor_control.h"
 #include "trace/trace_ring.h"
 #include "usb/usb_bulk.h"
 #include "usb/usb_cdc.h"
@@ -53,7 +53,7 @@ static void trace_producer_core1_main(void) {
     bool init_ok = (i2c_monitor_init() == I2C_MONITOR_RC_OK) && (spi_monitor_init() == SPI_MONITOR_RC_OK);
 
     i2c_monitor_control_bind_executor(
-        i2c_monitor_set_channel_sample_hz,
+        i2c_monitor_set_channel_config,
         i2c_monitor_get_channel_status,
         i2c_monitor_get_all_status
     );

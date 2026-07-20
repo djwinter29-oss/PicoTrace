@@ -2,7 +2,7 @@
 
 #include <string.h>
 
-#include "trace/capture/i2c_monitor.c"
+#include "trace/i2c/i2c_monitor.c"
 
 void i2c_monitor_test_reset(void) {
     if (g_i2c_monitor_initialized) {
@@ -15,11 +15,14 @@ void i2c_monitor_test_reset(void) {
 }
 
 bool i2c_monitor_test_start_channel(uint32_t channel, uint32_t sample_hz) {
+    i2c_monitor_channel_config_t config;
+
     if (i2c_monitor_init() != I2C_MONITOR_RC_OK) {
         return false;
     }
 
-    return i2c_monitor_set_channel_sample_hz(channel, sample_hz) == I2C_MONITOR_RC_OK;
+    config.sample_hz = sample_hz;
+    return i2c_monitor_set_channel_config(channel, &config) == I2C_MONITOR_RC_OK;
 }
 
 bool i2c_monitor_test_feed_completed_buffer(

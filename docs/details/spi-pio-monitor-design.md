@@ -17,7 +17,7 @@ For the higher-level component view around this design, see:
 
 ## Scope
 
-This design covers the SPI capture implementation scaffold under `firmware/src/trace/capture/`.
+This design covers the SPI capture implementation scaffold under `firmware/src/trace/spi/`.
 
 The current implementation now includes a concrete SPI trace packet contract for the shared ring
 and USB stream path. The design notes below describe that current contract rather than leaving it
@@ -309,8 +309,8 @@ This is the smallest SPI monitor design that fits the current PicoTrace architec
 
 ## Implementation Status
 
-The checked-in firmware implementation in `firmware/src/trace/capture/spi_monitor.c` and
-`firmware/src/trace/capture/spi_monitor.pio` now follows this per-`CS_N` sampler design:
+The checked-in firmware implementation in `firmware/src/trace/spi/spi_monitor.c` and
+`firmware/src/trace/spi/spi_monitor.pio` now follows this per-`CS_N` sampler design:
 
 - two observed `CS_N` slots per bus
 - one sampler and DMA path per `CS_N` slot

@@ -8,9 +8,9 @@
 #include "app_control.h"
 #include "config/i2c_monitor_config.h"
 #include "config/spi_monitor_config.h"
-#include "trace/capture/spi_monitor_control.h"
-#include "trace/decode/i2c_decoder.h"
-#include "trace/capture/i2c_monitor_control.h"
+#include "trace/spi/spi_monitor_control.h"
+#include "trace/i2c/i2c_decoder.h"
+#include "trace/i2c/i2c_monitor_control.h"
 
 /** @brief Payload bytes required for the I2C set-rate request. */
 #define USB_HID_I2C_MONITOR_SET_PAYLOAD_BYTES 5u
@@ -51,16 +51,16 @@ static void usb_hid_write_u32_le(uint8_t *data, uint32_t value) {
 
 /** @brief Apply one I2C monitor set-rate HID request. */
 static bool usb_hid_handle_i2c_monitor_set_rate(usb_hid_command_t *response, const usb_hid_command_t *request) {
+    i2c_monitor_channel_config_t config;
     i2c_monitor_rc_t result;
-    uint32_t sample_hz;
 
     if (request->payload_length < USB_HID_I2C_MONITOR_SET_PAYLOAD_BYTES) {
         response->status = USB_HID_STATUS_BAD_LENGTH;
         return false;
     }
 
-    sample_hz = usb_hid_read_u32_le(&request->payload[1]);
-    result = i2c_monitor_control_set_channel_sample_hz(request->payload[0], sample_hz);
+    config.sample_hz = usb_hid_read_u32_le(&request->payload[1]);
+    result = i2c_monitor_control_set_channel_config(request->payload[0], &config);
     if (result != I2C_MONITOR_RC_OK) {
         if (result == I2C_MONITOR_RC_BUSY) {
             response->status = USB_HID_STATUS_BUSY;

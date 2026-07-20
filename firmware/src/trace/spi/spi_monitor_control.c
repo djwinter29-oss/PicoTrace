@@ -3,7 +3,7 @@
  * @brief Blocking command bridge for producer-core-owned SPI monitor control.
  */
 
-#include "trace/capture/spi_monitor_control.h"
+#include "trace/spi/spi_monitor_control.h"
 
 #include <string.h>
 

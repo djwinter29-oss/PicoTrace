@@ -1,9 +1,9 @@
-#include "trace/decode/i2c_trace_packet_test.h"
+#include "trace/i2c/i2c_trace_packet_test.h"
 
 #include <assert.h>
 #include <stdint.h>
 
-#include "trace/decode/i2c_trace_packet.h"
+#include "trace/i2c/i2c_trace_packet.h"
 #include "trace/trace_packet.h"
 
 typedef struct {

@@ -19,13 +19,13 @@ For the higher-level component view around this design, see:
 
 This design covers:
 
-- `firmware/src/trace/capture/i2c_monitor.pio`
-- `firmware/src/trace/capture/i2c_monitor.c`
-- `firmware/src/trace/capture/i2c_monitor.h`
-- `firmware/src/trace/decode/i2c_decoder.c`
-- `firmware/src/trace/decode/i2c_decoder.h`
-- `firmware/src/trace/decode/i2c_trace_packet.c`
-- `firmware/src/trace/decode/i2c_trace_packet.h`
+- `firmware/src/trace/i2c/i2c_monitor.pio`
+- `firmware/src/trace/i2c/i2c_monitor.c`
+- `firmware/src/trace/i2c/i2c_monitor.h`
+- `firmware/src/trace/i2c/i2c_decoder.c`
+- `firmware/src/trace/i2c/i2c_decoder.h`
+- `firmware/src/trace/i2c/i2c_trace_packet.c`
+- `firmware/src/trace/i2c/i2c_trace_packet.h`
 - `firmware/src/config/i2c_monitor_config.h`
 
 ## Current Design Choice
@@ -173,9 +173,9 @@ Instead, each I2C channel owns:
 
 For each completed DMA buffer:
 
-- `trace/decode/i2c_decoder.c` walks the oversampled `SDA` and `SCL` stream
+- `trace/i2c/i2c_decoder.c` walks the oversampled `SDA` and `SCL` stream
 - decoded items are reported back to `i2c_monitor.c` as fixed two-byte event/value pairs
-- `trace/decode/i2c_trace_packet.c` appends those pairs into the channel's open trace packet
+- `trace/i2c/i2c_trace_packet.c` appends those pairs into the channel's open trace packet
 - if the packet fills before the I2C transaction ends, it is pushed immediately and a continuation
     packet is opened for the same transaction on the next emitted item
 - if a `STOP` event is decoded, the current packet is pushed as the end of that I2C transaction
