@@ -66,6 +66,8 @@ static void test_i2c_monitor_backlog_overflow_latches_transition(void) {
     assert(i2c_monitor_test_feed_completed_buffer(0u, raw_words, 1u) == true);
     assert(i2c_monitor_test_feed_completed_buffer(0u, raw_words, 1u) == true);
     assert(i2c_monitor_test_feed_completed_buffer(0u, raw_words, 1u) == true);
+    assert(i2c_monitor_test_feed_completed_buffer(0u, raw_words, 1u) == true);
+    assert(i2c_monitor_test_feed_completed_buffer(0u, raw_words, 1u) == true);
 
     assert(i2c_monitor_get_channel_status(0u, &status) == I2C_MONITOR_RC_OK);
     assert(status.overrun == true);
@@ -107,7 +109,7 @@ static void test_i2c_monitor_status_reports_requested_and_effective_hz(void) {
     assert(status.sample_hz == test_expected_effective_sample_hz(requested_sample_hz));
 }
 
-static void test_i2c_monitor_third_buffer_absorbs_one_extra_completion(void) {
+static void test_i2c_monitor_fifth_buffer_absorbs_three_extra_completions(void) {
     static const uint32_t raw_words[1] = {0u};
     i2c_monitor_channel_status_t status;
 
@@ -118,11 +120,13 @@ static void test_i2c_monitor_third_buffer_absorbs_one_extra_completion(void) {
     assert(i2c_monitor_test_start_channel(0u, I2C_MONITOR_DEFAULT_SAMPLE_HZ) == true);
     assert(i2c_monitor_test_feed_completed_buffer(0u, raw_words, 1u) == true);
     assert(i2c_monitor_test_feed_completed_buffer(0u, raw_words, 1u) == true);
+    assert(i2c_monitor_test_feed_completed_buffer(0u, raw_words, 1u) == true);
+    assert(i2c_monitor_test_feed_completed_buffer(0u, raw_words, 1u) == true);
 
     assert(i2c_monitor_get_channel_status(0u, &status) == I2C_MONITOR_RC_OK);
     assert(status.overrun == false);
     assert(status.running == true);
-    assert(status.completed_buffers == 2u);
+    assert(status.completed_buffers == 4u);
 }
 
 static void test_i2c_monitor_poll_drains_completed_backlog(void) {
@@ -152,7 +156,7 @@ int main(void) {
     test_i2c_monitor_backlog_overflow_latches_transition();
     test_i2c_monitor_rejects_out_of_range_sample_hz();
     test_i2c_monitor_status_reports_requested_and_effective_hz();
-    test_i2c_monitor_third_buffer_absorbs_one_extra_completion();
+    test_i2c_monitor_fifth_buffer_absorbs_three_extra_completions();
     test_i2c_monitor_poll_drains_completed_backlog();
     return 0;
 }

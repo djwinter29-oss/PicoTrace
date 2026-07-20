@@ -85,7 +85,7 @@ If those device nodes are missing, enable I2C and SPI in Raspberry Pi OS configu
 
 ## Generating I2C Traffic
 
-The bench I2C wiring above feeds Raspberry Pi `I2C1` into PicoTrace channel `0x06`.
+The bench I2C wiring above feeds Raspberry Pi `I2C1` into PicoTrace channel `0`.
 
 Useful commands on Raspberry Pi OS include:
 
@@ -105,6 +105,10 @@ for the expected `112` decoded address probes:
     --traffic-command "i2cdetect -y 1" \
     --expected-address-queries 112
 ```
+
+On the current RP2040 bench, `4000000` is the validated setting for this scan. The `8000000`
+preset remains available, but live `i2cdetect -y 1` capture still shows overflow under the current
+oversample-and-decode architecture.
 
 ```bash
 sudo i2ctransfer -y 1 w3@0x50 0x00 0xAA 0x55

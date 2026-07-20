@@ -9,6 +9,7 @@
 
 #include "trace/i2c/i2c_monitor.h"
 
+#include <stdlib.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -38,6 +39,8 @@
  * @brief Runtime state for one sampled I2C channel.
  *
  * Each channel owns one PIO state machine, one DMA channel, and a small ring of raw buffers.
+ * The raw buffer storage is allocated only while a channel is active so one live capture can use
+ * a wider service window without reserving that RAM for every idle channel.
  */
 typedef struct {
     uint8_t kind;
@@ -64,7 +67,7 @@ typedef struct {
     volatile i2c_monitor_pending_transition_t pending_transition;
     i2c_decoder_state_t decoder_state;
     i2c_trace_packet_builder_t packet_builder;
-    uint32_t buffers[I2C_MONITOR_BUFFER_COUNT][I2C_MONITOR_BUFFER_WORDS];
+    uint32_t *buffers;
 } i2c_monitor_channel_state_t;
 
 typedef enum {
@@ -176,6 +179,27 @@ static bool i2c_monitor_start_channel(
 static bool i2c_monitor_transition_pending(const i2c_monitor_channel_state_t *channel_state);
 
 i2c_monitor_rc_t i2c_monitor_get_all_status(i2c_monitor_channel_status_t *status_out);
+
+static uint32_t *i2c_monitor_buffer_ptr(i2c_monitor_channel_state_t *channel_state, uint8_t buffer_index) {
+    return &channel_state->buffers[(size_t)buffer_index * I2C_MONITOR_BUFFER_WORDS];
+}
+
+static void i2c_monitor_free_buffers(i2c_monitor_channel_state_t *channel_state) {
+    free(channel_state->buffers);
+    channel_state->buffers = NULL;
+}
+
+static bool i2c_monitor_ensure_buffers(i2c_monitor_channel_state_t *channel_state) {
+    size_t words;
+
+    if (channel_state->buffers != NULL) {
+        return true;
+    }
+
+    words = (size_t)I2C_MONITOR_BUFFER_COUNT * I2C_MONITOR_BUFFER_WORDS;
+    channel_state->buffers = (uint32_t *)calloc(words, sizeof(uint32_t));
+    return channel_state->buffers != NULL;
+}
 
 static i2c_monitor_channel_state_t *i2c_monitor_get_channel_state(uint32_t channel) {
     if (channel >= I2C_MONITOR_CHANNEL_COUNT) {
@@ -306,7 +330,7 @@ static bool i2c_monitor_select_next_buffer(
 static void i2c_monitor_dma_restart(i2c_monitor_channel_state_t *channel_state, uint8_t buffer_index) {
     dma_channel_set_write_addr(
         channel_state->dma_channel,
-        channel_state->buffers[buffer_index],
+        i2c_monitor_buffer_ptr(channel_state, buffer_index),
         false
     );
     dma_channel_set_trans_count(
@@ -358,6 +382,7 @@ static void i2c_monitor_stop_channel_hardware(i2c_monitor_channel_state_t *chann
 static void i2c_monitor_shutdown_channel(i2c_monitor_channel_state_t *channel_state) {
     i2c_monitor_stop_channel_hardware(channel_state);
     i2c_monitor_reset_channel_runtime(channel_state);
+    i2c_monitor_free_buffers(channel_state);
 }
 static void i2c_monitor_shutdown_all(void) {
     irq_set_enabled(DMA_IRQ_0, false);
@@ -467,6 +492,8 @@ static void i2c_monitor_transition_channel(
         if (restart_started && (next_packet_flags != 0u)) {
             i2c_trace_packet_builder_mark_next_packet(&channel_state->packet_builder, next_packet_flags);
         }
+    } else {
+        i2c_monitor_free_buffers(channel_state);
     }
 
     if (restart_started && restore_status_after_restart) {
@@ -658,7 +685,7 @@ void i2c_monitor_poll(void) {
                 g_i2c_monitor_logical_channels[channel],
                 i2c_decoder_process_buffer(
                     &channel_state->decoder_state,
-                    channel_state->buffers[completed_buffer],
+                    i2c_monitor_buffer_ptr(channel_state, completed_buffer),
                     I2C_MONITOR_BUFFER_WORDS,
                     i2c_trace_packet_builder_capture_event,
                     &channel_state->packet_builder
@@ -705,6 +732,10 @@ static bool i2c_monitor_start_channel(
         return false;
     }
 
+    if (!i2c_monitor_ensure_buffers(channel_state)) {
+        return false;
+    }
+
     gpio_disable_pulls(channel_state->sda_gpio);
     gpio_disable_pulls(channel_state->scl_gpio);
     gpio_set_input_enabled(channel_state->sda_gpio, true);
@@ -737,7 +768,7 @@ static bool i2c_monitor_start_channel(
     dma_channel_configure(
         (uint)channel_state->dma_channel,
         &dma_config,
-        channel_state->buffers[0],
+        i2c_monitor_buffer_ptr(channel_state, 0u),
         &i2c_monitor_pio->rxf[channel_state->sm],
         I2C_MONITOR_BUFFER_WORDS,
         false

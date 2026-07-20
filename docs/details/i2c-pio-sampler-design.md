@@ -5,7 +5,7 @@
 This document describes the current firmware scaffold for passive I2C sampling, oversampled I2C
 decode, and trace packetization.
 
-The focus here is the capture boundary from PIO sampling into per-channel ping-pong DMA buffers,
+The focus here is the capture boundary from PIO sampling into per-channel DMA buffers,
 then into a per-channel decoder state and a persistent per-channel trace packet buffer.
 
 ## Related Architecture
@@ -51,7 +51,11 @@ Each I2C channel gets:
 - one PIO state machine
 - one two-pin sampling program
 - one DMA channel
-- three rotating raw buffers
+- five rotating raw buffers while that channel is active
+
+The current implementation allocates those raw buffers only while a channel is running. This keeps
+the idle footprint lower than reserving the larger 8 MHz service window for all four channels in
+static `.bss` all the time.
 
 The current static protocol split reserves `pio1` state machines `0` through `3` for I2C so the
 shared SPI monitor can occupy `pio0` state machines `0` through `3` without overlap.
@@ -100,27 +104,29 @@ sample and is a better fit for per-channel DMA buffers.
 
 ## Buffer Layout
 
-Each channel owns three raw buffers:
+Each active channel owns five raw buffers:
 
 - buffer `0`
 - buffer `1`
 - buffer `2`
+- buffer `3`
+- buffer `4`
 
 Each buffer contains `I2C_MONITOR_BUFFER_WORDS` 32-bit words.
 
-At the current default:
+At the current 8 MHz-oriented active-channel setting:
 
-- `I2C_MONITOR_BUFFER_WORDS = 128`
+- `I2C_MONITOR_BUFFER_WORDS = 256`
 
 That gives:
 
-$$128 \times 4 = 512\ \text{bytes per buffer}$$
+$$256 \times 4 = 1024\ \text{bytes per buffer}$$
 
-Per channel, the ping-pong pair consumes:
+Per active channel, the raw capture reservoir consumes:
 
-$$3 \times 512 = 1536\ \text{bytes}$$
+$$5 \times 1024 = 5120\ \text{bytes}$$
 
-Across four channels, the raw sample buffers consume:
+Because that storage is allocated only for active channels, idle channels do not reserve this RAM.
 
 $$4 \times 1536 = 6144\ \text{bytes}$$
 
@@ -136,7 +142,7 @@ The DMA configuration is:
 - write increment enabled
 - DREQ paced by the owning PIO state machine
 
-The DMA writes into one active ping-pong buffer until `I2C_MONITOR_BUFFER_WORDS` words are filled.
+The DMA writes into one active buffer until `I2C_MONITOR_BUFFER_WORDS` words are filled.
 
 When that transfer completes:
 
@@ -161,7 +167,7 @@ For each completed buffer the IRQ path:
 Then the producer-core poll path:
 
 - stops any active channel whenever streaming is disabled
-- passes one completed ping-pong slot at a time to the decoder
+- drains every ready completed buffer for that channel before moving on
 - appends decoded I2C items into a persistent per-channel trace packet buffer
 
 The producer-core loop now always checks all four I2C channel states when the monitor is
@@ -172,7 +178,7 @@ over a fixed four-channel scan.
 This keeps DMA completion capture-first while moving decode and packet assembly out of the hard IRQ
 path. Packet assembly is still no longer forced to flush at DMA buffer boundaries.
 
-The current implementation uses one extra DMA slot rather than a separate staging copy. A completed
+The current implementation uses extra DMA slots rather than a separate staging copy. A completed
 DMA slot remains software-owned until decode finishes, and DMA is re-armed onto any remaining free
 slot. If every non-completed slot is still software-owned when a completion arrives, the channel
 takes the existing stop-first overflow recovery path.
@@ -255,9 +261,16 @@ This remains a comfortable starting point for 400 kHz passive observation while 
 scaffold simple. Because channels are independent, control code may choose different oversampling
 rates per channel or stop unused channels entirely by passing `0`.
 
-At the default `8000000 Hz` sample rate, one `128`-word DMA buffer now covers `256 us` of raw
-capture instead of `128 us`, which gives the producer core a wider decode and packetization window
-before the next ping-pong handoff arrives.
+At the default `8000000 Hz` sample rate, one `256`-word DMA buffer covers `512 us` of raw capture,
+and the active five-buffer ring gives roughly `2.56 ms` of total raw buffering before a sustained
+decode stall forces overflow recovery.
+
+On the current Raspberry Pi bench, this wider active-channel reservoir improved the live
+`i2cdetect -y 1` result at `8000000 Hz`, but it still did not eliminate overflow on RP2040. The
+validated bench setting remains `4000000 Hz`, which captures all expected `112` address probes on
+channel `0` without overflow. Reaching a reliable `8000000 Hz` path on RP2040 likely requires a
+more structural change than buffering alone, such as moving more edge qualification into PIO or
+otherwise reducing the software decoder work per raw sample.
 
 ## Overrun Handling
 

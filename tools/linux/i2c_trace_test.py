@@ -77,8 +77,11 @@ def _configure_capture(channel: int, sample_hz: int) -> None:
 
 def _teardown_capture(channel: int) -> None:
     with HidControlClient.open() as control:
-        control.i2c_set_rate(channel, 0)
         control.set_stream_enabled(False)
+        try:
+            control.i2c_set_rate(channel, 0)
+        except Exception:
+            pass
 
 
 def main() -> int:

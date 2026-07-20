@@ -51,7 +51,10 @@ target_link_libraries(picotrace
     tinyusb_board
 )
 
-target_compile_definitions(picotrace PRIVATE PICOTRACE_FIRMWARE_VERSION="${PICOTRACE_FIRMWARE_VERSION}")
+target_compile_definitions(picotrace PRIVATE
+    PICOTRACE_FIRMWARE_VERSION="${PICOTRACE_FIRMWARE_VERSION}"
+    PICO_HEAP_SIZE=0x1C00
+)
 
 pico_generate_pio_header(picotrace ${CMAKE_CURRENT_LIST_DIR}/src/trace/i2c/i2c_monitor.pio)
 pico_generate_pio_header(picotrace ${CMAKE_CURRENT_LIST_DIR}/src/trace/spi/spi_monitor.pio)

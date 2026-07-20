@@ -41,9 +41,9 @@ bool i2c_monitor_test_feed_completed_buffer(
     }
 
     active_buffer = channel_state->active_buffer;
-    memset(channel_state->buffers[active_buffer], 0, sizeof(channel_state->buffers[active_buffer]));
+    memset(i2c_monitor_buffer_ptr(channel_state, active_buffer), 0, I2C_MONITOR_BUFFER_WORDS * sizeof(uint32_t));
     memcpy(
-        channel_state->buffers[active_buffer],
+        i2c_monitor_buffer_ptr(channel_state, active_buffer),
         raw_words,
         raw_word_count * sizeof(raw_words[0])
     );
