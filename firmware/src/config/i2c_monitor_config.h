@@ -11,11 +11,15 @@
 /** @brief Number of logical I2C monitor channels in the current board mapping. */
 #define I2C_MONITOR_CHANNEL_COUNT 4u
 /** @brief Number of raw DMA buffers owned by each logical I2C monitor channel. */
-#define I2C_MONITOR_BUFFER_COUNT 2u
+#define I2C_MONITOR_BUFFER_COUNT 3u
 /** @brief Number of 32-bit words stored in each raw DMA buffer. */
-#define I2C_MONITOR_BUFFER_WORDS 64u
+#define I2C_MONITOR_BUFFER_WORDS 128u
+/** @brief Lowest validated preset oversampling rate accepted by the passive I2C monitor. */
+#define I2C_MONITOR_SAMPLE_HZ_SLOW 4000000u
 /** @brief Default I2C oversampling rate used by simple control paths. */
 #define I2C_MONITOR_DEFAULT_SAMPLE_HZ 8000000u
+/** @brief Highest validated preset oversampling rate accepted by the passive I2C monitor. */
+#define I2C_MONITOR_SAMPLE_HZ_FAST 12000000u
 
 /** @brief SDA GPIO for logical I2C monitor channel `0`. */
 #define I2C_MONITOR_CH0_LOGICAL_CHANNEL 0x00u

@@ -15,7 +15,7 @@
 /** @brief Payload bytes required for the I2C set-rate request. */
 #define USB_HID_I2C_MONITOR_SET_PAYLOAD_BYTES 5u
 /** @brief Payload bytes returned for one I2C channel status snapshot. */
-#define USB_HID_I2C_MONITOR_STATUS_PAYLOAD_BYTES 18u
+#define USB_HID_I2C_MONITOR_STATUS_PAYLOAD_BYTES 22u
 /** @brief Bytes used per channel in the compact I2C all-status response. */
 #define USB_HID_I2C_MONITOR_ALL_STATUS_CHANNEL_BYTES 14u
 /** @brief Total payload bytes returned for the compact I2C all-status response. */
@@ -94,10 +94,11 @@ static bool usb_hid_handle_i2c_monitor_get_status(usb_hid_command_t *response, c
     response->payload[2] = status.running ? 1u : 0u;
     response->payload[3] = status.overrun ? 1u : 0u;
     usb_hid_write_u32_le(&response->payload[4], status.sample_hz);
-    usb_hid_write_u32_le(&response->payload[8], status.completed_buffers);
-    usb_hid_write_u32_le(&response->payload[12], status.overrun_count);
-    response->payload[16] = status.transition_pending ? 1u : 0u;
-    response->payload[17] = status.transition_reason;
+    usb_hid_write_u32_le(&response->payload[8], status.requested_sample_hz);
+    usb_hid_write_u32_le(&response->payload[12], status.completed_buffers);
+    usb_hid_write_u32_le(&response->payload[16], status.overrun_count);
+    response->payload[20] = status.transition_pending ? 1u : 0u;
+    response->payload[21] = status.transition_reason;
     return true;
 }
 

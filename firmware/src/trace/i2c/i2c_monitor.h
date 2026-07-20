@@ -25,7 +25,7 @@ typedef enum {
 
 /** @brief Requested runtime configuration for one observed I2C channel. */
 typedef struct {
-	uint32_t sample_hz; /**< Oversampling rate in Hz, or `0` to stop sampling. */
+	uint32_t sample_hz; /**< Oversampling preset in Hz, or `0` to stop sampling. Non-zero requests must match one of the validated monitor presets. */
 } i2c_monitor_channel_config_t;
 
 /** @brief Snapshot of one monitor channel state. */
@@ -35,7 +35,8 @@ typedef struct {
 	bool overrun; /**< Sticky flag set when one or more decoded fragments could not be queued. */
 	bool transition_pending; /**< Indicates whether the producer core still needs to complete a latched transition. */
 	uint8_t transition_reason; /**< Pending boundary event type when @ref transition_pending is set, otherwise `0`. */
-	uint32_t sample_hz; /**< Active oversampling rate for the channel, or `0` when stopped. */
+	uint32_t requested_sample_hz; /**< Requested oversampling rate for the active channel, or `0` when stopped. */
+	uint32_t sample_hz; /**< Effective active oversampling rate after PIO divider quantization, or `0` when stopped. */
 	uint32_t completed_buffers; /**< Number of ping-pong buffers completed since the current start. */
 	uint32_t overrun_count; /**< Number of times decoded output could not be queued since the current start. */
 } i2c_monitor_channel_status_t;

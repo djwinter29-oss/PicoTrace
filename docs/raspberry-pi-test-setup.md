@@ -95,6 +95,17 @@ sudo i2cdetect -y 1
 
 This produces address-probe traffic on `I2C1`.
 
+For a repeatable PicoTrace validation run that configures capture, runs the Linux scan, and checks
+for the expected `112` decoded address probes:
+
+```bash
+./.venv/bin/python tools/linux/i2c_trace_test.py \
+    --channel 0 \
+    --sample-hz 4000000 \
+    --traffic-command "i2cdetect -y 1" \
+    --expected-address-queries 112
+```
+
 ```bash
 sudo i2ctransfer -y 1 w3@0x50 0x00 0xAA 0x55
 ```

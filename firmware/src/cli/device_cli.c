@@ -66,14 +66,15 @@ static bool device_cli_parse_u32(const char *text, uint32_t *value_out) {
 
 /** @brief Format one I2C monitor status line for the CLI. */
 static bool device_cli_write_i2cmon_status(uint32_t channel, const i2c_monitor_channel_status_t *status) {
-    char line[96];
+    char line[128];
 
     snprintf(
         line,
         sizeof(line),
-        "i2cmon ch%lu %s hz=%lu buffers=%lu overruns=%lu sticky=%u pending=%u reason=%u",
+        "i2cmon ch%lu %s req_hz=%lu hz=%lu buffers=%lu overruns=%lu sticky=%u pending=%u reason=%u",
         (unsigned long)channel,
         status->running ? "running" : "stopped",
+        (unsigned long)status->requested_sample_hz,
         (unsigned long)status->sample_hz,
         (unsigned long)status->completed_buffers,
         (unsigned long)status->overrun_count,
@@ -178,6 +179,9 @@ static bool device_cli_i2cmon(int argc, const char *const *argv) {
                 if (result == I2C_MONITOR_RC_DISABLED) {
                     return cli_shell_write_line("i2cmon disabled");
                 }
+                if (result == I2C_MONITOR_RC_INVALID) {
+                    return cli_shell_write_line("i2cmon invalid");
+                }
                 return cli_shell_write_line("i2cmon apply failed");
             }
 
@@ -189,7 +193,7 @@ static bool device_cli_i2cmon(int argc, const char *const *argv) {
         }
     }
 
-    return cli_shell_write_line("Usage: i2cmon <channel> <sample_hz>|status <channel>");
+    return cli_shell_write_line("Usage: i2cmon <channel> <4000000|8000000|12000000>|status <channel>");
 }
 
 /** @copydoc device_cli_spimon */

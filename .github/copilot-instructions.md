@@ -96,6 +96,7 @@ Lazy code without its check is unfinished. For non-trivial logic, leave one runn
 - Keep SPI and I2C support described as passive transaction capture on a shared USB host-control model
 - Put implementation-level design writeups under `docs/details/`
 - Keep board pin allocation in `docs/hardware-connections.md` and concrete Raspberry Pi bench hookup guidance in `docs/raspberry-pi-test-setup.md`
+- Use `tools/linux/i2c_trace_test.py` for repeatable Raspberry Pi I2C trace validation when the task is specifically about address-scan capture on the bench
 - When documenting the trace queue, align with the current behavior in `firmware/src/trace/` and the host checks in `firmware/tests/usb_app_test.c`
 
 ### Doxygen Rules

@@ -39,12 +39,22 @@ Reasons:
 - the existing hardware allocation does not need to be remapped into one contiguous 8-pin window
 - the later software decoder can stay per-channel instead of demultiplexing one shared raw stream
 
+The sample-rate control surface is intentionally narrow. Instead of accepting arbitrary oversampling
+requests, the current monitor only accepts these validated presets:
+
+- `4000000 Hz`
+- `8000000 Hz`
+- `12000000 Hz`
+
 Each I2C channel gets:
 
 - one PIO state machine
 - one two-pin sampling program
 - one DMA channel
-- two ping-pong raw buffers
+- three rotating raw buffers
+
+The current static protocol split reserves `pio1` state machines `0` through `3` for I2C so the
+shared SPI monitor can occupy `pio0` state machines `0` through `3` without overlap.
 
 The sampler now starts idle at boot. A channel begins sampling only when the producer-side control
 path requests a non-zero oversampling rate for that channel. Passing `0` stops that channel and
@@ -90,28 +100,29 @@ sample and is a better fit for per-channel DMA buffers.
 
 ## Buffer Layout
 
-Each channel owns two raw buffers:
+Each channel owns three raw buffers:
 
 - buffer `0`
 - buffer `1`
+- buffer `2`
 
 Each buffer contains `I2C_MONITOR_BUFFER_WORDS` 32-bit words.
 
 At the current default:
 
-- `I2C_MONITOR_BUFFER_WORDS = 64`
+- `I2C_MONITOR_BUFFER_WORDS = 128`
 
 That gives:
 
-$$64 \times 4 = 256\ \text{bytes per buffer}$$
+$$128 \times 4 = 512\ \text{bytes per buffer}$$
 
 Per channel, the ping-pong pair consumes:
 
-$$2 \times 256 = 512\ \text{bytes}$$
+$$3 \times 512 = 1536\ \text{bytes}$$
 
 Across four channels, the raw sample buffers consume:
 
-$$4 \times 512 = 2048\ \text{bytes}$$
+$$4 \times 1536 = 6144\ \text{bytes}$$
 
 ## DMA Ownership Model
 
@@ -130,11 +141,11 @@ The DMA writes into one active ping-pong buffer until `I2C_MONITOR_BUFFER_WORDS`
 When that transfer completes:
 
 1. the DMA interrupt marks the completed buffer as ready
-2. the implementation advances to the other buffer
-3. the DMA channel is restarted against the alternate buffer
+2. the implementation advances to one free buffer that is not still software-owned
+3. the DMA channel is restarted against that next free buffer
 
-This makes the completed buffer stable for software consumption while the alternate buffer begins
-collecting the next raw sample block.
+This makes the completed buffer stable for software consumption while one remaining free slot can
+still collect the next raw sample block.
 
 ## Buffer Completion Path
 
@@ -153,13 +164,18 @@ Then the producer-core poll path:
 - passes one completed ping-pong slot at a time to the decoder
 - appends decoded I2C items into a persistent per-channel trace packet buffer
 
+The producer-core loop now always checks all four I2C channel states when the monitor is
+initialized. The earlier per-channel poll-interest bitmask was removed because the monitor already
+runs on a dedicated producer core and the extra state bookkeeping did not buy a meaningful saving
+over a fixed four-channel scan.
+
 This keeps DMA completion capture-first while moving decode and packet assembly out of the hard IRQ
 path. Packet assembly is still no longer forced to flush at DMA buffer boundaries.
 
-The current implementation does not keep a third staging copy. A completed DMA slot remains
-software-owned until decode finishes, and DMA is only re-armed onto the alternate slot if that slot
-is no longer software-owned. If the alternate slot is still owned by software when a completion
-arrives, the channel takes the existing stop-first overflow recovery path.
+The current implementation uses one extra DMA slot rather than a separate staging copy. A completed
+DMA slot remains software-owned until decode finishes, and DMA is re-armed onto any remaining free
+slot. If every non-completed slot is still software-owned when a completion arrives, the channel
+takes the existing stop-first overflow recovery path.
 
 ## Current Buffer Handoff Contract
 
@@ -220,7 +236,16 @@ does not have a more specific event type. In the current design, known boundarie
 
 ## Sample Rate Model
 
-Each channel has an independent runtime `sample_hz` selected when that channel is started.
+Each channel has an independent runtime `sample_hz` selected when that channel is started, but the
+selection is limited to a small preset policy rather than arbitrary rates.
+
+The current control path validates non-zero requests before arming the PIO sampler:
+
+- accepted presets: `4000000`, `8000000`, `12000000`
+- maximum accepted preset remains bounded by the current `clk_sys` frequency
+
+The monitor also tracks both the requested sample rate and the effective rate after PIO clock
+divider quantization, so status output reflects the rate the sampler is actually running.
 
 The recommended default for a caller that wants a simple starting point is:
 
@@ -229,6 +254,10 @@ The recommended default for a caller that wants a simple starting point is:
 This remains a comfortable starting point for 400 kHz passive observation while still keeping the
 scaffold simple. Because channels are independent, control code may choose different oversampling
 rates per channel or stop unused channels entirely by passing `0`.
+
+At the default `8000000 Hz` sample rate, one `128`-word DMA buffer now covers `256 us` of raw
+capture instead of `128 us`, which gives the producer core a wider decode and packetization window
+before the next ping-pong handoff arrives.
 
 ## Overrun Handling
 
@@ -365,8 +394,8 @@ service work in the same loop.
 
 - one DMA channel per monitored I2C channel, restarted from the DMA IRQ handler
 - ring packets currently carry decoded event fragments rather than final transaction summaries
-- the DMA IRQ path still does one bounded raw-buffer copy into a staging slot before the producer
-    poll path decodes it
+- the DMA IRQ path now hands completed ping-pong buffers directly to the producer poll path without
+    an extra staging copy
 - decode timing assumptions are based on oversampled SCL rising-edge reconstruction and have not yet
     been tuned against every malformed or marginal bus waveform case
 

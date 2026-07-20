@@ -1,4 +1,9 @@
+
 # SPI PIO Monitor Design
+
+The current static protocol split reserves `pio0` state machines `0` through `3` for SPI capture.
+That keeps all four logical SPI samplers on one PIO block and leaves `pio1` state machines `0`
+through `3` available for the four-channel I2C monitor.
 
 ## Purpose
 

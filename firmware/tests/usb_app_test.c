@@ -45,6 +45,7 @@ static uint32_t stub_watchdog_reboot_delay_ms;
 static bool stub_led_state;
 static uint32_t stub_led_set_calls;
 static uint32_t stub_monitor_sample_hz[4];
+static uint32_t stub_monitor_requested_sample_hz[4];
 static bool stub_monitor_running[4];
 static bool stub_monitor_overrun[4];
 static uint32_t stub_monitor_completed_buffers[4];
@@ -177,8 +178,10 @@ static i2c_monitor_rc_t stub_monitor_set_channel_config(uint32_t channel, const 
     }
 
     stub_monitor_sample_hz[channel] = sample_hz;
+    stub_monitor_requested_sample_hz[channel] = sample_hz;
     stub_monitor_running[channel] = (sample_hz != 0u);
     if (sample_hz == 0u) {
+        stub_monitor_requested_sample_hz[channel] = 0u;
         stub_monitor_completed_buffers[channel] = 0u;
         stub_monitor_overrun[channel] = false;
         stub_monitor_overrun_count[channel] = 0u;
@@ -198,6 +201,7 @@ static i2c_monitor_rc_t stub_monitor_get_channel_status(uint32_t channel, i2c_mo
     status_out->overrun = stub_monitor_overrun[channel];
     status_out->transition_pending = false;
     status_out->transition_reason = 0u;
+    status_out->requested_sample_hz = stub_monitor_requested_sample_hz[channel];
     status_out->sample_hz = stub_monitor_sample_hz[channel];
     status_out->completed_buffers = stub_monitor_completed_buffers[channel];
     status_out->overrun_count = stub_monitor_overrun_count[channel];
@@ -218,6 +222,7 @@ static i2c_monitor_rc_t stub_monitor_get_all_status(i2c_monitor_channel_status_t
         status_out[channel].initialized = true;
         status_out[channel].running = stub_monitor_running[channel];
         status_out[channel].overrun = stub_monitor_overrun[channel];
+        status_out[channel].requested_sample_hz = stub_monitor_requested_sample_hz[channel];
         status_out[channel].sample_hz = stub_monitor_sample_hz[channel];
         status_out[channel].completed_buffers = stub_monitor_completed_buffers[channel];
         status_out[channel].overrun_count = stub_monitor_overrun_count[channel];
@@ -334,6 +339,7 @@ void reset_usb_stub(void) {
     stub_led_state = false;
     stub_led_set_calls = 0u;
     memset(stub_monitor_sample_hz, 0, sizeof(stub_monitor_sample_hz));
+    memset(stub_monitor_requested_sample_hz, 0, sizeof(stub_monitor_requested_sample_hz));
     memset(stub_monitor_running, 0, sizeof(stub_monitor_running));
     memset(stub_monitor_overrun, 0, sizeof(stub_monitor_overrun));
     memset(stub_monitor_completed_buffers, 0, sizeof(stub_monitor_completed_buffers));
@@ -1164,7 +1170,7 @@ static void test_cli_i2cmon_command_updates_monitor_channel(void) {
 
     assert(stub_monitor_running[2] == true);
     assert(stub_monitor_sample_hz[2] == 8000000u);
-    assert(strstr((const char *)stub_cdc_tx_data, "i2cmon ch2 running hz=8000000") != NULL);
+    assert(strstr((const char *)stub_cdc_tx_data, "i2cmon ch2 running req_hz=8000000 hz=8000000") != NULL);
 }
 
 static void test_cli_i2cmon_status_reports_channel_state(void) {
@@ -1172,6 +1178,7 @@ static void test_cli_i2cmon_status_reports_channel_state(void) {
 
     reset_usb_stub();
     stub_monitor_running[1] = true;
+    stub_monitor_requested_sample_hz[1] = 4100000u;
     stub_monitor_sample_hz[1] = 4000000u;
     stub_monitor_completed_buffers[1] = 12u;
     stub_monitor_overrun[1] = true;
@@ -1181,7 +1188,7 @@ static void test_cli_i2cmon_status_reports_channel_state(void) {
     tud_cdc_rx_cb(0u);
     device_cli_poll();
 
-    assert(strstr((const char *)stub_cdc_tx_data, "i2cmon ch1 running hz=4000000 buffers=12 overruns=3 sticky=1") != NULL);
+    assert(strstr((const char *)stub_cdc_tx_data, "i2cmon ch1 running req_hz=4100000 hz=4000000 buffers=12 overruns=3 sticky=1") != NULL);
 }
 
 static void test_cli_i2cmon_reports_disabled_state(void) {
@@ -1195,6 +1202,19 @@ static void test_cli_i2cmon_reports_disabled_state(void) {
     device_cli_poll();
 
     assert(strstr((const char *)stub_cdc_tx_data, "i2cmon disabled") != NULL);
+}
+
+static void test_cli_i2cmon_reports_invalid_rate(void) {
+    static const uint8_t payload[] = {'i','2','c','m','o','n',' ','1',' ','1','\r'};
+
+    reset_usb_stub();
+    stub_monitor_result = I2C_MONITOR_RC_INVALID;
+    load_cdc_rx(payload, sizeof(payload));
+
+    tud_cdc_rx_cb(0u);
+    device_cli_poll();
+
+    assert(strstr((const char *)stub_cdc_tx_data, "i2cmon invalid") != NULL);
 }
 
 static void test_cli_spimon_command_updates_monitor_bus(void) {
@@ -1661,6 +1681,7 @@ static void test_hid_i2c_monitor_get_status_returns_payload(void) {
     reset_usb_stub();
     stub_monitor_running[0] = true;
     stub_monitor_overrun[0] = true;
+    stub_monitor_requested_sample_hz[0] = 2100000u;
     stub_monitor_sample_hz[0] = 2000000u;
     stub_monitor_completed_buffers[0] = 9u;
     stub_monitor_overrun_count[0] = 2u;
@@ -1675,7 +1696,7 @@ static void test_hid_i2c_monitor_get_status_returns_payload(void) {
     assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
     assert(response.opcode == USB_HID_OPCODE_I2C_MONITOR_GET_STATUS);
     assert(response.status == USB_HID_STATUS_OK);
-    assert(response.payload_length == 18u);
+    assert(response.payload_length == 22u);
     assert(response.payload[0] == 0u);
     assert(response.payload[1] == 1u);
     assert(response.payload[2] == 1u);
@@ -1684,10 +1705,14 @@ static void test_hid_i2c_monitor_get_status_returns_payload(void) {
     assert(response.payload[5] == 0x84u);
     assert(response.payload[6] == 0x1Eu);
     assert(response.payload[7] == 0x00u);
-    assert(response.payload[8] == 9u);
-    assert(response.payload[12] == 2u);
-    assert(response.payload[16] == 0u);
-    assert(response.payload[17] == 0u);
+    assert(response.payload[8] == 0x20u);
+    assert(response.payload[9] == 0x0Bu);
+    assert(response.payload[10] == 0x20u);
+    assert(response.payload[11] == 0x00u);
+    assert(response.payload[12] == 9u);
+    assert(response.payload[16] == 2u);
+    assert(response.payload[20] == 0u);
+    assert(response.payload[21] == 0u);
 }
 
 static void test_hid_i2c_monitor_get_all_status_returns_all_channels(void) {
@@ -1956,6 +1981,7 @@ int main(void) {
     test_cli_i2cmon_command_updates_monitor_channel();
     test_cli_i2cmon_status_reports_channel_state();
     test_cli_i2cmon_reports_disabled_state();
+    test_cli_i2cmon_reports_invalid_rate();
     test_cli_spimon_command_updates_monitor_bus();
     test_cli_spimon_command_updates_one_selected_channel();
     test_cli_spimon_status_reports_bus_state();
