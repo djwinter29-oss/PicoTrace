@@ -14,36 +14,6 @@
 #include <string.h>
 
 /**
- * @brief Store the fully updated working decoder state back into the caller-owned state object.
- * @param state Caller-owned decoder state to update.
- * @param have_previous_levels Whether one previous sampled SDA/SCL pair is available.
- * @param previous_sda Previously observed SDA level.
- * @param previous_scl Previously observed SCL level.
- * @param transaction_active Whether decoding is currently inside a transaction.
- * @param pending_event Deferred START or STOP candidate awaiting confirmation.
- * @param bit_count Number of bits currently accumulated into @p current_byte.
- * @param current_byte Byte currently under construction.
- */
-static void i2c_decoder_store_state(
-    i2c_decoder_state_t *state,
-    bool have_previous_levels,
-    bool previous_sda,
-    bool previous_scl,
-    bool transaction_active,
-    uint8_t pending_event,
-    uint8_t bit_count,
-    uint8_t current_byte
-) {
-    state->have_previous_levels = have_previous_levels;
-    state->previous_sda = previous_sda;
-    state->previous_scl = previous_scl;
-    state->transaction_active = transaction_active;
-    state->pending_event = pending_event;
-    state->bit_count = bit_count;
-    state->current_byte = current_byte;
-}
-
-/**
  * @brief Emit one decoded event to the caller-provided sink when emission is still enabled.
  * @param result Caller-owned decode result updated if the sink rejects an event.
  * @param event_sink Caller-owned sink pointer, cleared when the sink rejects an event.
@@ -62,6 +32,53 @@ static void i2c_decoder_emit_event(
         *result = I2C_DECODER_RESULT_SINK_REJECTED;
         *event_sink = NULL;
     }
+}
+
+/**
+ * @brief Confirm one previously latched START or STOP candidate using the current stable-high-SCL sample.
+ * @param result Caller-owned decode result updated if the sink rejects an event.
+ * @param event_sink Caller-owned sink pointer, cleared when the sink rejects an event.
+ * @param event_sink_context Caller-owned callback context passed to the sink.
+ * @param pending_event Deferred START or STOP candidate awaiting confirmation.
+ * @param sda Currently sampled SDA level.
+ * @param scl Currently sampled SCL level.
+ * @param transaction_active Caller-owned transaction-active flag updated when START or STOP is confirmed.
+ * @param bit_count Caller-owned in-progress byte bit count reset on confirmed boundaries.
+ * @param current_byte Caller-owned in-progress byte reset on confirmed boundaries.
+ * @return `true` when a deferred boundary candidate was consumed, otherwise `false`.
+ */
+static bool i2c_decoder_consume_pending_event(
+    i2c_decoder_result_t *result,
+    i2c_decoder_event_sink_t *event_sink,
+    void *event_sink_context,
+    uint8_t *pending_event,
+    bool sda,
+    bool scl,
+    bool *transaction_active,
+    uint8_t *bit_count,
+    uint8_t *current_byte
+) {
+    if (*pending_event == 0u) {
+        return false;
+    }
+
+    /* START and STOP are latched one sample later so SDA must remain stable while SCL stays high. */
+    if (scl) {
+        if ((*pending_event == I2C_DECODE_EVENT_START) && !sda) {
+            *transaction_active = true;
+            *bit_count = 0u;
+            *current_byte = 0u;
+            i2c_decoder_emit_event(result, event_sink, event_sink_context, I2C_DECODE_EVENT_START, 0u);
+        } else if ((*pending_event == I2C_DECODE_EVENT_STOP) && sda) {
+            *transaction_active = false;
+            *bit_count = 0u;
+            *current_byte = 0u;
+            i2c_decoder_emit_event(result, event_sink, event_sink_context, I2C_DECODE_EVENT_STOP, 0u);
+        }
+    }
+
+    *pending_event = 0u;
+    return true;
 }
 
 /** @copydoc i2c_decoder_init */
@@ -108,7 +125,6 @@ i2c_decoder_result_t i2c_decoder_process_buffer(
 
         for (uint32_t sample_in_word = 0u; sample_in_word < 16u; ++sample_in_word) {
             uint8_t sample = (uint8_t)((packed_samples >> 30u) & 0x03u);
-            bool skip_edge_detection = false;
             bool sda = (sample & 0x01u) != 0u;
             bool scl = (sample & 0x02u) != 0u;
 
@@ -121,26 +137,17 @@ i2c_decoder_result_t i2c_decoder_process_buffer(
                 continue;
             }
 
-            if (pending_event != 0u) {
-                /* START and STOP are latched one sample later so SDA must remain stable while SCL stays high. */
-                skip_edge_detection = true;
-                if (scl) {
-                    if ((pending_event == I2C_DECODE_EVENT_START) && !sda) {
-                        transaction_active = true;
-                        bit_count = 0u;
-                        current_byte = 0u;
-                        i2c_decoder_emit_event(&result, &event_sink, event_sink_context, I2C_DECODE_EVENT_START, 0u);
-                    } else if ((pending_event == I2C_DECODE_EVENT_STOP) && sda) {
-                        transaction_active = false;
-                        bit_count = 0u;
-                        current_byte = 0u;
-                        i2c_decoder_emit_event(&result, &event_sink, event_sink_context, I2C_DECODE_EVENT_STOP, 0u);
-                    }
-                }
-                pending_event = 0u;
-            }
-
-            if (!skip_edge_detection) {
+            if (!i2c_decoder_consume_pending_event(
+                    &result,
+                    &event_sink,
+                    event_sink_context,
+                    &pending_event,
+                    sda,
+                    scl,
+                    &transaction_active,
+                    &bit_count,
+                    &current_byte
+                )) {
                 /* START is SDA falling while SCL is high; STOP is SDA rising while SCL is high. */
                 if (previous_scl && scl && previous_sda && !sda) {
                     pending_event = I2C_DECODE_EVENT_START;
@@ -169,15 +176,12 @@ i2c_decoder_result_t i2c_decoder_process_buffer(
         }
     }
 
-    i2c_decoder_store_state(
-        state,
-        have_previous_levels,
-        previous_sda,
-        previous_scl,
-        transaction_active,
-        pending_event,
-        bit_count,
-        current_byte
-    );
+    state->have_previous_levels = have_previous_levels;
+    state->previous_sda = previous_sda;
+    state->previous_scl = previous_scl;
+    state->transaction_active = transaction_active;
+    state->pending_event = pending_event;
+    state->bit_count = bit_count;
+    state->current_byte = current_byte;
     return result;
 }

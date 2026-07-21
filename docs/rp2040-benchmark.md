@@ -147,6 +147,16 @@ Current interpretation:
 - `overruns=0` and `sticky=0` mean the I2C monitor stayed healthy during the smoke test.
 - the latest validation after moving I2C to `pio1` kept the same `112`-transaction smoke-test result with `overruns=0` and `sticky=0`
 
+### Current I2C Stress Check
+
+In addition to the smoke test above, the repository now carries a repeatable repeated-start stress
+workload driven by Linux `i2ctransfer`:
+
+- workload source: `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --workload combined-burst --target-address 0x50 --read-length 4 --repeat-count 64 --expect-transactions 0`
+- primary purpose: denser repeated-start traffic for decode and backlog validation
+- comparison signal: repeated-start shape (`starts = 2 * stops`) plus `overruns=0` and `sticky=0`
+- transaction-count matching is intentionally disabled by default because the target address may NACK while still producing observable traffic
+
 ## Historical 225 MHz Reference
 
 Before the current `250 MHz` Pico baseline, this repository tracked the following `225 MHz`

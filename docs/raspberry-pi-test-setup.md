@@ -120,6 +120,17 @@ sudo i2ctransfer -y 1 w1@0x50 0x00 r4
 This produces a combined write-then-read transaction and is useful for exercising repeated-start
 behavior.
 
+For a heavier repo-local stress pass that repeatedly generates that repeated-start pattern while
+collecting PicoTrace output, run:
+
+```bash
+./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --workload combined-burst --target-address 0x50 --read-length 4 --repeat-count 64 --expect-transactions 0
+```
+
+That stress mode skips transaction-count matching by default and instead focuses on whether the
+trace shows the expected repeated-start shape (`2` starts per completed stop) and avoids monitor
+overruns under a denser repeated-start workload.
+
 If no target device is present at the selected address, the Raspberry Pi can still generate
 observable address and clock traffic, but the transaction may end with a NACK.
 

@@ -276,7 +276,6 @@ static void spi_monitor_packet_builder_reset(spi_monitor_packet_builder_t *build
 static void spi_monitor_packet_builder_drop_open_packet(spi_monitor_packet_builder_t *builder) {
     builder->packet_open = false;
     builder->payload_offset = 0u;
-    memset(&builder->packet.header, 0, sizeof(builder->packet.header));
 }
 
 /** @brief Reset the active transaction state for one observed SPI bus. */
@@ -391,7 +390,6 @@ static bool spi_monitor_packet_builder_flush(
     if (end_of_transaction) {
         builder->transaction_sequence = 0u;
     }
-    memset(&builder->packet.header, 0, sizeof(builder->packet.header));
     return true;
 }
 
@@ -603,51 +601,6 @@ static void spi_monitor_cs_irq_callback(uint gpio, uint32_t events) {
     }
 }
 
-/** @brief Decode one packed MOSI-only sample word for the active logical channel on a bus. */
-static void spi_monitor_process_mosi_word(
-    uint32_t bus,
-    spi_monitor_channel_runtime_t *channel_runtime,
-    spi_monitor_channel_state_t *channel_state,
-    uint8_t logical_channel,
-    uint32_t packed_samples
-) {
-    uint8_t mosi_byte = spi_monitor_extract_mosi_byte(packed_samples);
-
-    spi_monitor_channel_append_byte_pair(
-        bus,
-        &channel_runtime->packet_builder,
-        channel_state,
-        SPI_MONITOR_CAPTURE_MOSI,
-        logical_channel,
-        channel_runtime->transaction_timestamp_us,
-        mosi_byte,
-        0u
-    );
-}
-
-/** @brief Decode one packed MOSI+MISO sample word for the active logical channel on a bus. */
-static void spi_monitor_process_dual_word(
-    uint32_t bus,
-    spi_monitor_channel_runtime_t *channel_runtime,
-    spi_monitor_channel_state_t *channel_state,
-    uint8_t logical_channel,
-    uint32_t packed_samples
-) {
-    uint8_t mosi_byte = spi_monitor_extract_mosi_byte(packed_samples);
-    uint8_t miso_byte = spi_monitor_extract_miso_byte(packed_samples);
-
-    spi_monitor_channel_append_byte_pair(
-        bus,
-        &channel_runtime->packet_builder,
-        channel_state,
-        SPI_MONITOR_CAPTURE_MOSI_MISO,
-        logical_channel,
-        channel_runtime->transaction_timestamp_us,
-        mosi_byte,
-        miso_byte
-    );
-}
-
 /** @brief Decode one raw SPI word buffer for one logical channel whose sampler is already CS-gated. */
 static void spi_monitor_internal_process_channel_words(
     uint32_t channel,
@@ -657,9 +610,11 @@ static void spi_monitor_internal_process_channel_words(
 ) {
     spi_monitor_channel_runtime_t *channel_runtime = &g_spi_monitor_channel_runtimes[channel];
     spi_monitor_channel_state_t *channel_state = &g_spi_monitor_channels[channel];
+    spi_monitor_packet_builder_t *builder = &channel_runtime->packet_builder;
     uint32_t bus = spi_monitor_channel_to_bus(channel);
     spi_monitor_capture_t capture = g_spi_monitor_buses[bus].capture;
     uint8_t logical_channel = g_spi_monitor_logical_channels[channel];
+    uint32_t transaction_timestamp_us;
 
     if ((raw_words == NULL) || (raw_word_count == 0u) || !spi_monitor_channel_running(channel)) {
         return;
@@ -669,13 +624,35 @@ static void spi_monitor_internal_process_channel_words(
         spi_monitor_open_channel_transaction(channel, timestamp_us);
     }
 
+    transaction_timestamp_us = channel_runtime->transaction_timestamp_us;
+
     if (capture == SPI_MONITOR_CAPTURE_MOSI_MISO) {
         for (uint32_t word_index = 0u; word_index < raw_word_count; ++word_index) {
-            spi_monitor_process_dual_word(bus, channel_runtime, channel_state, logical_channel, raw_words[word_index]);
+            uint32_t packed_samples = raw_words[word_index];
+
+            spi_monitor_channel_append_byte_pair(
+                bus,
+                builder,
+                channel_state,
+                capture,
+                logical_channel,
+                transaction_timestamp_us,
+                spi_monitor_extract_mosi_byte(packed_samples),
+                spi_monitor_extract_miso_byte(packed_samples)
+            );
         }
     } else {
         for (uint32_t word_index = 0u; word_index < raw_word_count; ++word_index) {
-            spi_monitor_process_mosi_word(bus, channel_runtime, channel_state, logical_channel, raw_words[word_index]);
+            spi_monitor_channel_append_byte_pair(
+                bus,
+                builder,
+                channel_state,
+                capture,
+                logical_channel,
+                transaction_timestamp_us,
+                spi_monitor_extract_mosi_byte(raw_words[word_index]),
+                0u
+            );
         }
     }
 

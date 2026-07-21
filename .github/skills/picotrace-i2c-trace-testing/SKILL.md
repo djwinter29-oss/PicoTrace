@@ -31,7 +31,8 @@ Run a repeatable PicoTrace I2C trace test from Linux using the board-local CDC C
 4. Compare the traced transaction count against the expected `112` address-probe transactions.
 5. Check the device status line for `overruns=0` and `sticky=0`.
 6. Use `docs/rp2040-benchmark.md` as the comparison report page and report whether the I2C trace result changed compared with the previous baseline, especially transaction count, balanced start/stop events, or monitor overrun behavior.
-7. If the helper fails because the live firmware accepts different CDC `i2cmon` sample-rate values, retry with a supported sampler rate such as `4000000`, `8000000`, or `12000000`.
+7. When you need a heavier I2C decode/backlog check than one `i2cdetect` scan, run the helper with `--workload combined-burst --target-address 0x50 --read-length 4 --repeat-count 64 --expect-transactions 0` and compare the repeated-start event shape (`starts = 2 * stops`) plus monitor overrun behavior.
+8. If the helper fails because the live firmware accepts different CDC `i2cmon` sample-rate values, retry with a supported sampler rate such as `4000000`, `8000000`, or `12000000`.
 
 ## Core Commands
 - Focused firmware tests: `cmake --build build/tests --target usb_app_test && ./build/tests/usb_app_test`
@@ -40,6 +41,7 @@ Run a repeatable PicoTrace I2C trace test from Linux using the board-local CDC C
 - Build Pico 2 firmware: `cmake --build build/firmware-pico2 --target picotrace`
 - Flash Pico 2 firmware: `./tools/linux/load.sh --board pico2 --firmware-build-dir build/firmware-pico2 --skip-build`
 - Default I2C scan test: `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
+- Repeated-start stress test: `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --workload combined-burst --target-address 0x50 --read-length 4 --repeat-count 64 --expect-transactions 0`
 - Passive capture only: `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --sample-hz 4000000 --no-generate-traffic --expect-transactions 0`
 
 ## Interpretation

@@ -53,6 +53,7 @@ static void test_i2c_monitor_backlog_overflow_latches_transition(void) {
     assert(i2c_monitor_test_start_channel(0u, I2C_MONITOR_DEFAULT_SAMPLE_HZ) == true);
     assert(i2c_monitor_test_feed_completed_buffer(0u, raw_words, 1u) == true);
     assert(i2c_monitor_test_feed_completed_buffer(0u, raw_words, 1u) == true);
+    assert(i2c_monitor_test_feed_completed_buffer(0u, raw_words, 1u) == true);
 
     assert(i2c_monitor_get_channel_status(0u, &status) == I2C_MONITOR_RC_OK);
     assert(status.overrun == true);
@@ -61,8 +62,31 @@ static void test_i2c_monitor_backlog_overflow_latches_transition(void) {
     assert(status.transition_reason == I2C_DECODE_EVENT_OVERFLOW);
 }
 
+static void test_i2c_monitor_poll_drains_all_ready_buffers(void) {
+    static const uint32_t raw_words[1] = {0u};
+    i2c_monitor_channel_status_t status;
+
+    i2c_monitor_test_reset();
+    trace_ring_init();
+    app_control_init();
+
+    assert(i2c_monitor_test_start_channel(0u, I2C_MONITOR_DEFAULT_SAMPLE_HZ) == true);
+    assert(i2c_monitor_test_feed_completed_buffer(0u, raw_words, 1u) == true);
+    assert(i2c_monitor_test_feed_completed_buffer(0u, raw_words, 1u) == true);
+
+    i2c_monitor_poll();
+
+    assert(i2c_monitor_test_feed_completed_buffer(0u, raw_words, 1u) == true);
+    assert(i2c_monitor_test_feed_completed_buffer(0u, raw_words, 1u) == true);
+    assert(i2c_monitor_get_channel_status(0u, &status) == I2C_MONITOR_RC_OK);
+    assert(status.completed_buffers == 4u);
+    assert(status.overrun == false);
+    assert(status.transition_pending == false);
+}
+
 int main(void) {
     test_i2c_monitor_poll_releases_completed_slot();
     test_i2c_monitor_backlog_overflow_latches_transition();
+    test_i2c_monitor_poll_drains_all_ready_buffers();
     return 0;
 }
