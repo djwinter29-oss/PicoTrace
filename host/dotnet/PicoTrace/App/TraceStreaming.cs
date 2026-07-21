@@ -46,9 +46,9 @@ internal static class TraceStreaming
         var header = packet.Header;
         if (header.TraceType is TraceType.I2C)
         {
-            var prefix = $"[{FormatTimestampUs(header.TimestampUs)}] seq={header.Sequence,6} {header.TraceType} CH{header.Channel}: ";
+            var i2cPrefix = $"[{FormatTimestampUs(header.TimestampUs)}] seq={header.Sequence,6} {header.TraceType} CH{header.Channel}: ";
             var payload = string.Join(' ', TraceDecoder.DecodeI2cEvents(packet).Select(FormatI2cEvent));
-            return prefix + payload;
+            return i2cPrefix + payload;
         }
 
         var prefix = $"[{FormatTimestampUs(header.TimestampUs)}] seq={header.Sequence,6} {header.TraceType} CH{header.Channel} ";
