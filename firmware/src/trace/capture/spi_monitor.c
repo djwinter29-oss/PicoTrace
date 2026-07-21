@@ -37,7 +37,7 @@ typedef char spi_monitor_dma_ring_size_must_match[
     (SPI_MONITOR_DMA_RING_BYTES == (1u << SPI_MONITOR_DMA_RING_BITS)) ? 1 : -1
 ];
 typedef char spi_monitor_pio_programs_must_fit[
-    (SPI_MONITOR_CS_SLOTS_PER_BUS * SPI_MONITOR_PIO_PROGRAM_WORD_COUNT <= 32u) ? 1 : -1
+    (SPI_MONITOR_CHANNEL_COUNT * SPI_MONITOR_PIO_PROGRAM_WORD_COUNT <= 32u) ? 1 : -1
 ];
 
 #if defined(_MSC_VER)
@@ -124,8 +124,8 @@ static spi_monitor_channel_runtime_t g_spi_monitor_channel_runtimes[SPI_MONITOR_
 static spi_monitor_channel_sampler_state_t g_spi_monitor_channel_samplers[SPI_MONITOR_CHANNEL_COUNT] = {
     {.bus = 0u, .pio = pio0, .clock_pin = SPI_MONITOR_SPI0_SCLK_GPIO, .data_pin_base = SPI_MONITOR_SPI0_MOSI_GPIO, .cs_gpio = SPI_MONITOR_SPI0_CS0_GPIO, .sm = 0u, .dma_channel = -1},
     {.bus = 0u, .pio = pio0, .clock_pin = SPI_MONITOR_SPI0_SCLK_GPIO, .data_pin_base = SPI_MONITOR_SPI0_MOSI_GPIO, .cs_gpio = SPI_MONITOR_SPI0_CS1_GPIO, .sm = 1u, .dma_channel = -1},
-    {.bus = 1u, .pio = pio1, .clock_pin = SPI_MONITOR_SPI1_SCLK_GPIO, .data_pin_base = SPI_MONITOR_SPI1_MOSI_GPIO, .cs_gpio = SPI_MONITOR_SPI1_CS0_GPIO, .sm = 0u, .dma_channel = -1},
-    {.bus = 1u, .pio = pio1, .clock_pin = SPI_MONITOR_SPI1_SCLK_GPIO, .data_pin_base = SPI_MONITOR_SPI1_MOSI_GPIO, .cs_gpio = SPI_MONITOR_SPI1_CS1_GPIO, .sm = 1u, .dma_channel = -1},
+    {.bus = 1u, .pio = pio0, .clock_pin = SPI_MONITOR_SPI1_SCLK_GPIO, .data_pin_base = SPI_MONITOR_SPI1_MOSI_GPIO, .cs_gpio = SPI_MONITOR_SPI1_CS0_GPIO, .sm = 2u, .dma_channel = -1},
+    {.bus = 1u, .pio = pio0, .clock_pin = SPI_MONITOR_SPI1_SCLK_GPIO, .data_pin_base = SPI_MONITOR_SPI1_MOSI_GPIO, .cs_gpio = SPI_MONITOR_SPI1_CS1_GPIO, .sm = 3u, .dma_channel = -1},
 };
 /* ponytail: the test-only bus injector still fans one caller-provided raw-word buffer out to each
  * eligible active channel instead of simulating truly independent per-channel DMA retirement. That

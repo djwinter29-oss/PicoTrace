@@ -68,7 +68,7 @@ typedef enum {
     I2C_MONITOR_TRANSITION_RESTART = 2u,
 } i2c_monitor_transition_t;
 
-static const PIO i2c_monitor_pio = pio0;
+static const PIO i2c_monitor_pio = pio1;
 static const uint8_t g_i2c_monitor_logical_channels[I2C_MONITOR_CHANNEL_COUNT] = {
     I2C_MONITOR_CH0_LOGICAL_CHANNEL,
     I2C_MONITOR_CH1_LOGICAL_CHANNEL,

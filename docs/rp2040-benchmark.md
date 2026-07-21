@@ -66,13 +66,13 @@ These are the current reference results on the `250 MHz` RP2040 baseline.
 | --- | --- | --- |
 | `15.5 MHz` | `3/3` | Clean payload pass; one trial reported a single sampler overrun counter increment |
 | `16.0 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
-| `16.5 MHz` | `3/3` | Current highest verified lossless pass point |
-| `17.0 MHz` | `1/3` | First unstable downstream-limited point; failing trials hit `sink=ring` and `peak=256` |
-| `17.5 MHz` | `0/3` | Consistent downstream-limited failures |
+| `16.5 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
+| `17.0 MHz` | `3/3` | Current highest verified lossless pass point after moving SPI to `pio0` and I2C to `pio1` |
+| `17.5 MHz` | `1/3` | First unstable downstream-limited point; failing trials hit `sink=ring` and `peak=256` |
 | `18.0 MHz` | `0/3` | Failure mode moves upstream; sampler overruns dominate |
 
 Observed transmit throughput across the verified MOSI pass points at `250 MHz` was about
-`7.6-8.1 Mb/s` over the full transfer window.
+`7.4-8.0 Mb/s` over the full transfer window.
 
 ### MOSI + MISO At 250 MHz
 
@@ -109,6 +109,7 @@ Current interpretation:
 - `112` traced transactions means the RP2040 bench captured the expected Linux address-probe workload.
 - balanced `start` and `stop` counts mean the captured I2C event stream stayed complete for the scan.
 - `overruns=0` and `sticky=0` mean the I2C monitor stayed healthy during the smoke test.
+- the latest validation after moving I2C to `pio1` kept the same `112`-transaction smoke-test result with `overruns=0` and `sticky=0`
 
 ## Historical 225 MHz Reference
 
@@ -207,8 +208,8 @@ those signals did not produce data loss at the documented passing points.
 The current edge behavior on this `250 MHz` baseline improved further after raising the RP2040
 system clock from `225 MHz` to `250 MHz` while keeping fixed trace packet size at `896` bytes:
 
-- MOSI-only capture remains lossless through `16.5 MHz`, becomes unstable at `17.0 MHz`, and
-  then fails consistently by `17.5 MHz`; the `18.0 MHz` failure mode shifts upstream into sampler
+- MOSI-only capture now remains lossless through `17.0 MHz`, becomes unstable at `17.5 MHz`, and
+  then fails consistently by `18.0 MHz`; the `18.0 MHz` failure mode shifts upstream into sampler
   overruns
 - MOSI+MISO capture remains lossless through `5.8 MHz` and becomes unstable at `5.9 MHz` with the
   same downstream ring-full signature seen at lower clocks
