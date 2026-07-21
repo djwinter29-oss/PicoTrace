@@ -3,6 +3,7 @@ set -euo pipefail
 
 board="pico"
 firmware_build_dir=""
+system_clock_khz=""
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
@@ -13,6 +14,7 @@ usage() {
 Usage:
   ./tools/linux/build.sh [firmware_build_dir] [board]
 	./tools/linux/build.sh [--board BOARD] [--firmware-build-dir DIR]
+	                       [--system-clock-khz KHZ]
 	./tools/linux/build.sh [-Board BOARD] [-board BOARD]
 EOF
 }
@@ -26,6 +28,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--firmware-build-dir)
 			firmware_build_dir="$2"
+			shift 2
+			;;
+		--system-clock-khz)
+			system_clock_khz="$2"
 			shift 2
 			;;
 		--help|-h)
@@ -66,5 +72,15 @@ fi
 
 cd "${repo_root}"
 
-cmake -S firmware -B "${firmware_build_dir}" -DPICO_BOARD="${board}"
+cmake_args=(
+	-S firmware
+	-B "${firmware_build_dir}"
+	-DPICO_BOARD="${board}"
+)
+
+if [[ -n "${system_clock_khz}" ]]; then
+	cmake_args+=( -DPICOTRACE_SYSTEM_CLOCK_KHZ="${system_clock_khz}" )
+fi
+
+cmake "${cmake_args[@]}"
 cmake --build "${firmware_build_dir}"

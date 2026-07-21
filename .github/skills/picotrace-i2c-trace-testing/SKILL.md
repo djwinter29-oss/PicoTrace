@@ -25,14 +25,17 @@ Run a repeatable PicoTrace I2C trace test from Linux using the board-local CDC C
 - Activate the project virtual environment when running the Python helper
 
 ## Procedure
-1. Check the current I2C trace baseline notes in `docs/rp2040-benchmark.md`, then confirm the bench wiring and Raspberry Pi preconditions in `docs/raspberry-pi-test-setup.md`.
+1. Check the current I2C trace baseline notes in `docs/testlog/rp2040-benchmark-baseline.md`, the recent RP2040 run history in `docs/testlog/rp2040-benchmark-testlog.md`, and the entry format in `docs/testlog/rp2040-benchmark-testlog-template.md`, then confirm the bench wiring and Raspberry Pi preconditions in `docs/raspberry-pi-test-setup.md`.
 2. If needed, rebuild and flash the target firmware before testing.
 3. Run the repo-local I2C trace helper to configure channel `0`, generate one `i2cdetect -y 1` scan, and collect the decoded trace summary.
 4. Compare the traced transaction count against the expected `112` address-probe transactions.
 5. Check the device status line for `overruns=0` and `sticky=0`.
-6. Use `docs/rp2040-benchmark.md` as the comparison report page and report whether the I2C trace result changed compared with the previous baseline, especially transaction count, balanced start/stop events, or monitor overrun behavior.
-7. When you need a heavier I2C decode/backlog check than one `i2cdetect` scan, run the helper with `--workload combined-burst --target-address 0x50 --read-length 4 --repeat-count 64 --expect-transactions 0` and compare the repeated-start event shape (`starts = 2 * stops`) plus monitor overrun behavior.
-8. If the helper fails because the live firmware accepts different CDC `i2cmon` sample-rate values, retry with a supported sampler rate such as `4000000`, `8000000`, or `12000000`.
+6. Record the run in `docs/testlog/rp2040-benchmark-testlog.md` using `docs/testlog/rp2040-benchmark-testlog-template.md`, including commands, measured results, and interpretation.
+7. Compare the I2C result against `docs/testlog/rp2040-benchmark-baseline.md` and report whether the trace result changed compared with the previous baseline, especially transaction count, balanced start/stop events, or monitor overrun behavior.
+8. When you need a heavier I2C decode/backlog check than one `i2cdetect` scan, run the helper with `--workload combined-burst --target-address 0x50 --read-length 4 --repeat-count 64 --expect-transactions 0` and compare the repeated-start event shape (`starts = 2 * stops`) plus monitor overrun behavior.
+9. When you only need the standard smoke check, prefer `--sample-hz 4000000` as the conservative baseline rate.
+10. If you are checking the sampler ceiling on current RP2040 firmware, treat `6600000` as the current highest clean point for the standard `i2cdetect` workload; `6650000` already showed overruns on the bench, and `8000000` is not a safe smoke-test default.
+11. If the helper fails because the live firmware or bench cannot sustain the requested rate, retry with a lower non-zero sampler rate instead of assuming only a few discrete values are supported; the current firmware accepts any non-zero `sample-hz` and clamps the PIO divider at `1.0`.
 
 ## Core Commands
 - Focused firmware tests: `cmake --build build/tests --target usb_app_test && ./build/tests/usb_app_test`
@@ -49,7 +52,11 @@ Run a repeatable PicoTrace I2C trace test from Linux using the board-local CDC C
 - `starts != stops` means the captured I2C event stream is incomplete or truncated.
 - `overruns > 0` or `sticky > 0` means the monitor fell behind or latched an error condition during capture.
 - A status line that does not enter `running` means the live firmware rejected the requested `i2cmon` configuration.
+- On the current RP2040 bench, `6600000` is the practical upper clean point for the standard smoke workload; use that only for explicit ceiling checks, not routine regression smoke tests.
 
 ## References
 - Bench wiring and Raspberry Pi traffic generation: `docs/raspberry-pi-test-setup.md`
 - Repo-local helper: `tools/linux/i2c_trace_test.py`
+- RP2040 baseline page: `docs/testlog/rp2040-benchmark-baseline.md`
+- RP2040 dated run log: `docs/testlog/rp2040-benchmark-testlog.md`
+- RP2040 log template: `docs/testlog/rp2040-benchmark-testlog-template.md`

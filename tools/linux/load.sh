@@ -3,6 +3,7 @@ set -euo pipefail
 
 board="pico"
 firmware_build_dir=""
+system_clock_khz=""
 openocd_exe="${OPENOCD_EXE:-openocd}"
 adapter_speed_khz="${PICO_DEBUG_PROBE_SPEED_KHZ:-5000}"
 openocd_target="${PICO_OPENOCD_TARGET:-${OPENOCD_TARGET:-}}"
@@ -17,7 +18,7 @@ usage() {
 Usage:
   ./tools/linux/load.sh [firmware_build_dir] [unused] [board]
     ./tools/linux/load.sh [--board BOARD] [--firmware-build-dir DIR] [--openocd-target FILE]
-                        [--openocd-exe EXE] [--adapter-speed-khz KHZ] [--skip-build]
+                [--openocd-exe EXE] [--adapter-speed-khz KHZ] [--system-clock-khz KHZ] [--skip-build]
         ./tools/linux/load.sh [-Board BOARD] [-board BOARD]
 EOF
 }
@@ -43,6 +44,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --adapter-speed-khz)
             adapter_speed_khz="$2"
+            shift 2
+            ;;
+        --system-clock-khz)
+            system_clock_khz="$2"
             shift 2
             ;;
         --skip-build)
@@ -231,7 +236,17 @@ PY
 }
 
 if [[ "${skip_build}" -eq 0 ]]; then
-    cmake -S firmware -B "${firmware_build_dir}" -DPICO_BOARD="${board}"
+    cmake_args=(
+        -S firmware
+        -B "${firmware_build_dir}"
+        -DPICO_BOARD="${board}"
+    )
+
+    if [[ -n "${system_clock_khz}" ]]; then
+        cmake_args+=( -DPICOTRACE_SYSTEM_CLOCK_KHZ="${system_clock_khz}" )
+    fi
+
+    cmake "${cmake_args[@]}"
     cmake --build "${firmware_build_dir}"
 fi
 

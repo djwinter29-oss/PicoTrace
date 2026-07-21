@@ -16,7 +16,8 @@ Run the PicoTrace firmware and host benchmark workflow for measured SPI throughp
 - Validate benchmark regressions after SPI sampler or packetization changes
 - Run as required validation after firmware changes that may affect trace-path performance
 - Reproduce the documented RP2040 benchmark sweeps
-- Update benchmark documentation with fresh measured results
+- Record fresh measured results in the RP2040 benchmark test log
+- Update the stable RP2040 baseline page only when the baseline itself should change
 
 ## Prerequisites
 - Work in the PicoTrace repository root
@@ -26,13 +27,14 @@ Run the PicoTrace firmware and host benchmark workflow for measured SPI throughp
 - Activate the project virtual environment when running the Python benchmark script
 
 ## Procedure
-1. Check the current benchmark notes in `docs/rp2040-benchmark.md` before changing the measured baseline.
+1. Check the current RP2040 baseline notes in `docs/testlog/rp2040-benchmark-baseline.md`, the live run log in `docs/testlog/rp2040-benchmark-testlog.md`, and the entry format in `docs/testlog/rp2040-benchmark-testlog-template.md` before changing the measured baseline.
 2. Rebuild focused firmware tests when the SPI trace path changed.
 3. Rebuild and flash the target firmware before benchmarking.
 4. Run the SPI benchmark script with the correct board, capture mode, and sweep speeds.
 5. Compare pass rate, mismatch position, sampler overruns, sink overruns, ring drops, stalls, and peak ring depth.
-6. Use `docs/rp2040-benchmark.md` as the comparison report page and report whether the measured SPI benchmark envelope changed compared with the previous baseline, including any regression or improvement in pass point, throughput, or overrun behavior.
-7. If the benchmark envelope changed, update `docs/rp2040-benchmark.md` and preserve older baselines as historical reference.
+6. Record the run in `docs/testlog/rp2040-benchmark-testlog.md` using `docs/testlog/rp2040-benchmark-testlog-template.md`, including commands, measured results, and interpretation.
+7. Compare the result against `docs/testlog/rp2040-benchmark-baseline.md` and report whether the measured SPI benchmark envelope changed compared with the previous baseline, including any regression or improvement in pass point, throughput, or overrun behavior.
+8. If the benchmark envelope changed, update `docs/testlog/rp2040-benchmark-baseline.md` and preserve older baselines as historical reference.
 
 ## Core Commands
 - Focused firmware tests: `cmake --build build/tests --target usb_app_test && ./build/tests/usb_app_test`
@@ -51,3 +53,6 @@ Run the PicoTrace firmware and host benchmark workflow for measured SPI throughp
 
 ## References
 - Benchmark commands and update checklist: [benchmark-reference](./references/benchmark-reference.md)
+- RP2040 baseline page: `docs/testlog/rp2040-benchmark-baseline.md`
+- RP2040 dated run log: `docs/testlog/rp2040-benchmark-testlog.md`
+- RP2040 log template: `docs/testlog/rp2040-benchmark-testlog-template.md`

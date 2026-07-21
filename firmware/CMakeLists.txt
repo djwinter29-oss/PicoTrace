@@ -4,6 +4,7 @@ include(pico_sdk_import.cmake)
 
 set(PICO_BOARD "pico" CACHE STRING "Pico SDK board target")
 set(PICOTRACE_FIRMWARE_VERSION "dev" CACHE STRING "Firmware version string exposed over CLI and HID")
+set(PICOTRACE_SYSTEM_CLOCK_KHZ "" CACHE STRING "Optional system clock target override in kHz")
 
 project(PicoTrace C CXX ASM)
 
@@ -53,6 +54,9 @@ target_link_libraries(picotrace
 )
 
 target_compile_definitions(picotrace PRIVATE PICOTRACE_FIRMWARE_VERSION="${PICOTRACE_FIRMWARE_VERSION}")
+if (NOT PICOTRACE_SYSTEM_CLOCK_KHZ STREQUAL "")
+    target_compile_definitions(picotrace PRIVATE SYSTEM_CLOCK=${PICOTRACE_SYSTEM_CLOCK_KHZ}u)
+endif ()
 
 pico_generate_pio_header(picotrace ${CMAKE_CURRENT_LIST_DIR}/src/trace/capture/i2c/i2c_monitor.pio)
 pico_generate_pio_header(picotrace ${CMAKE_CURRENT_LIST_DIR}/src/trace/capture/spi/spi_monitor.pio)
