@@ -7,6 +7,7 @@
 
 #include "tusb.h"
 
+#include <assert.h>
 #include <stddef.h>
 
 #include "trace/trace_packet.h"
@@ -56,19 +57,21 @@ static void usb_bulk_reset_stream_state(void) {
 static bool usb_bulk_prepare_stream_chunk(uint32_t bytes_remaining, usb_bulk_stream_chunk_t *chunk_out) {
     while (g_usb_bulk_stream_state.packet == NULL) {
         const trace_packet_t *packet = trace_ring_peek();
+        uint32_t payload_bytes;
 
         if (packet == NULL) {
             return false;
         }
 
-        if (packet->header.payload_len > TRACE_PACKET_PAYLOAD_BYTES) {
-            trace_ring_pop();
-            continue;
+        payload_bytes = packet->header.payload_len;
+        assert(payload_bytes <= TRACE_PACKET_PAYLOAD_BYTES);
+        if (payload_bytes > TRACE_PACKET_PAYLOAD_BYTES) {
+            payload_bytes = TRACE_PACKET_PAYLOAD_BYTES;
         }
 
         g_usb_bulk_stream_state.packet = packet;
         g_usb_bulk_stream_state.packet_offset = 0u;
-        g_usb_bulk_stream_state.packet_bytes = TRACE_PACKET_HEADER_BYTES + packet->header.payload_len;
+        g_usb_bulk_stream_state.packet_bytes = TRACE_PACKET_HEADER_BYTES + payload_bytes;
     }
 
     chunk_out->data = ((const uint8_t *)g_usb_bulk_stream_state.packet) + g_usb_bulk_stream_state.packet_offset;
@@ -164,41 +167,8 @@ static bool usb_bulk_poll_trace_ring(void) {
     return wrote_any;
 }
 
-/** @copydoc usb_bulk_write */
-bool usb_bulk_write(const uint8_t *data, uint32_t length) {
-    uint32_t available;
-
-    if (!tud_ready()) {
-        return false;
-    }
-
-    available = tud_vendor_n_write_available(USB_VENDOR_ITF);
-    if ((data == NULL) || (length == 0u) || (available < length)) {
-        return false;
-    }
-
-    return tud_vendor_n_write(USB_VENDOR_ITF, data, length) == length;
-}
-
-/** @copydoc usb_bulk_stream_write */
-uint32_t usb_bulk_stream_write(const uint8_t *data, uint32_t length) {
-    usb_bulk_stream_write_stats_t stats = {0};
-    uint32_t written;
-
-    if (!tud_ready()) {
-        return 0u;
-    }
-
-    written = usb_bulk_write_chunk(data, length, tud_vendor_n_write_available(USB_VENDOR_ITF), false, &stats);
-    g_usb_bulk_stream_state.policy_deferral_count += stats.policy_deferrals;
-    g_usb_bulk_stream_state.deferred_bytes_count += stats.deferred_bytes;
-    return written;
-}
-
 /** @copydoc usb_bulk_service_stream */
 bool usb_bulk_service_stream(bool enabled) {
-    bool wrote_any;
-
     if (!enabled) {
         usb_bulk_reset_stream_state();
         return false;
@@ -208,11 +178,7 @@ bool usb_bulk_service_stream(bool enabled) {
         return false;
     }
 
-    wrote_any = usb_bulk_poll_trace_ring();
-    if (wrote_any) {
-        tud_vendor_n_write_flush(USB_VENDOR_ITF);
-    }
-    return wrote_any;
+    return usb_bulk_poll_trace_ring();
 }
 
 /** @copydoc usb_bulk_flush */

@@ -81,9 +81,9 @@ uint32_t trace_ring_high_watermark(void) {
 
 bool trace_ring_push(const trace_packet_t *packet) {
     trace_ring_t *ring = &g_trace_ring;
+    trace_packet_t *slot;
     uint32_t high_watermark;
     uint32_t occupancy;
-    uint32_t packet_bytes;
     uint32_t payload_bytes;
     uint32_t write_index;
     uint32_t read_index;
@@ -99,12 +99,13 @@ bool trace_ring_push(const trace_packet_t *packet) {
     }
 
     slot_index = write_index % TRACE_RING_CAPACITY;
-    payload_bytes = packet->header.payload_len;
-    if (payload_bytes > TRACE_PACKET_PAYLOAD_BYTES) {
-        payload_bytes = TRACE_PACKET_PAYLOAD_BYTES;
+    slot = &ring->slots[slot_index];
+    slot->header = packet->header;
+    if (slot->header.payload_len > TRACE_PACKET_PAYLOAD_BYTES) {
+        slot->header.payload_len = TRACE_PACKET_PAYLOAD_BYTES;
     }
-    packet_bytes = TRACE_PACKET_HEADER_BYTES + payload_bytes;
-    memcpy(&ring->slots[slot_index], packet, packet_bytes);
+    payload_bytes = slot->header.payload_len;
+    memcpy(slot->payload, packet->payload, payload_bytes);
     trace_ring_increment_relaxed(&ring->total_produced_packets);
     occupancy = (write_index - read_index) + 1u;
     high_watermark = trace_ring_load_relaxed(&ring->high_watermark_packets);

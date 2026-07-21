@@ -10,23 +10,7 @@
 #include <stdint.h>
 
 /**
- * @brief Attempt to write one exact vendor bulk payload immediately.
- * @param data Caller-owned payload bytes.
- * @param length Number of bytes to write.
- * @return `true` when all bytes were accepted, otherwise `false`.
- */
-bool usb_bulk_write(const uint8_t *data, uint32_t length);
-
-/**
- * @brief Attempt a stream-oriented vendor bulk write.
- * @param data Caller-owned payload bytes.
- * @param length Number of bytes available for streaming.
- * @return Number of bytes actually written.
- */
-uint32_t usb_bulk_stream_write(const uint8_t *data, uint32_t length);
-
-/**
- * @brief Service the vendor bulk trace stream, including any needed flush.
+ * @brief Service the vendor bulk trace stream without forcing a flush.
  * @param enabled Shared stream enable state.
  * @return `true` when one or more bytes were queued to TinyUSB during this poll.
  */
