@@ -344,14 +344,16 @@ uint8_t device_control_encode_spi_bus_status_payload(uint32_t bus, const spi_mon
     payload[5] = status->channel_select_mask;
     device_control_write_u32_le(&payload[6], status->timeout_us);
     device_control_write_u32_le(&payload[10], status->packets_emitted);
-    device_control_write_u32_le(&payload[14], status->overrun_count);
-    device_control_write_u32_le(&payload[18], status->sink_overrun_count);
-    device_control_write_u32_le(&payload[22], status->sampler_overrun_count);
-    device_control_write_u32_le(&payload[26], status->ring_drop_count);
-    device_control_write_u32_le(&payload[30], status->usb_stall_count);
-    device_control_write_u32_le(&payload[34], status->usb_host_backpressure_stall_count);
-    device_control_write_u32_le(&payload[38], status->usb_policy_deferral_count);
-    device_control_write_u32_le(&payload[42], status->peak_ring_depth_packets);
+    device_control_write_u32_le(&payload[14], status->transactions_emitted);
+    device_control_write_u32_le(&payload[18], status->overrun_count);
+    device_control_write_u32_le(&payload[22], status->sink_overrun_count);
+    device_control_write_u32_le(&payload[26], status->sampler_overrun_count);
+    device_control_write_u32_le(&payload[30], status->ring_drop_count);
+    device_control_write_u32_le(&payload[34], status->usb_stall_count);
+    device_control_write_u32_le(&payload[38], status->usb_host_backpressure_stall_count);
+    device_control_write_u32_le(&payload[42], status->usb_policy_deferral_count);
+    device_control_write_u32_le(&payload[46], status->peak_ring_depth_packets);
+    device_control_write_u32_le(&payload[50], status->timeout_close_count);
     return DEVICE_CONTROL_SPI_MONITOR_STATUS_PAYLOAD_BYTES;
 }
 
@@ -363,7 +365,7 @@ bool device_control_format_spi_bus_status_line(uint32_t bus, const spi_monitor_b
     return snprintf(
         buffer,
         capacity,
-        "spimon bus%lu %s select=%s capture=%s mode=%u timeout_us=%lu packets=%lu overruns=%lu",
+        "spimon bus%lu %s select=%s capture=%s mode=%u timeout_us=%lu packets=%lu txns=%lu overruns=%lu timeout_closes=%lu",
         (unsigned long)bus,
         status->running ? "running" : "stopped",
         device_control_spi_channel_select_name(status->channel_select_mask),
@@ -371,7 +373,9 @@ bool device_control_format_spi_bus_status_line(uint32_t bus, const spi_monitor_b
         (unsigned int)status->spi_mode,
         (unsigned long)status->timeout_us,
         (unsigned long)status->packets_emitted,
-        (unsigned long)status->overrun_count
+        (unsigned long)status->transactions_emitted,
+        (unsigned long)status->overrun_count,
+        (unsigned long)status->timeout_close_count
     ) > 0;
 }
 

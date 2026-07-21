@@ -35,7 +35,7 @@ __all__ = [
 DEFAULT_HID_REPORT_SIZE = 64
 _HID_I2C_STATUS_BYTES = 18
 _HID_I2C_ALL_STATUS_CHANNEL_BYTES = 14
-_HID_SPI_STATUS_BYTES = 46
+_HID_SPI_STATUS_BYTES = 54
 _HID_SPI_ALL_STATUS_CHANNEL_BYTES = 10
 
 
@@ -152,6 +152,7 @@ class SpiMonitorStatus:
     channel_select_mask: int
     timeout_us: int
     packets_emitted: int
+    transactions_emitted: int
     overrun_count: int
     sink_overrun_count: int
     sampler_overrun_count: int
@@ -160,6 +161,7 @@ class SpiMonitorStatus:
     usb_host_backpressure_stall_count: int
     usb_policy_deferral_count: int
     peak_ring_depth_packets: int
+    timeout_close_count: int
 
 
 @dataclass(frozen=True)
@@ -284,14 +286,16 @@ def decode_spi_monitor_status_payload(payload: bytes) -> SpiMonitorStatus:
         channel_select_mask=payload[5],
         timeout_us=_read_u32_le(payload, 6),
         packets_emitted=_read_u32_le(payload, 10),
-        overrun_count=_read_u32_le(payload, 14),
-        sink_overrun_count=_read_u32_le(payload, 18),
-        sampler_overrun_count=_read_u32_le(payload, 22),
-        ring_drop_count=_read_u32_le(payload, 26),
-        usb_stall_count=_read_u32_le(payload, 30),
-        usb_host_backpressure_stall_count=_read_u32_le(payload, 34),
-        usb_policy_deferral_count=_read_u32_le(payload, 38),
-        peak_ring_depth_packets=_read_u32_le(payload, 42),
+        transactions_emitted=_read_u32_le(payload, 14),
+        overrun_count=_read_u32_le(payload, 18),
+        sink_overrun_count=_read_u32_le(payload, 22),
+        sampler_overrun_count=_read_u32_le(payload, 26),
+        ring_drop_count=_read_u32_le(payload, 30),
+        usb_stall_count=_read_u32_le(payload, 34),
+        usb_host_backpressure_stall_count=_read_u32_le(payload, 38),
+        usb_policy_deferral_count=_read_u32_le(payload, 42),
+        peak_ring_depth_packets=_read_u32_le(payload, 46),
+        timeout_close_count=_read_u32_le(payload, 50),
     )
 
 

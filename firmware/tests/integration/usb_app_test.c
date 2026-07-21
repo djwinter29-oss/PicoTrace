@@ -60,7 +60,9 @@ static bool stub_spi_bus_running[2];
 static uint32_t stub_spi_timeout_us[SPI_MONITOR_CHANNEL_COUNT];
 static uint32_t stub_spi_bus_timeout_us[2];
 static uint32_t stub_spi_packets_emitted[SPI_MONITOR_CHANNEL_COUNT];
+static uint32_t stub_spi_transactions_emitted[SPI_MONITOR_CHANNEL_COUNT];
 static uint32_t stub_spi_overrun_count[SPI_MONITOR_CHANNEL_COUNT];
+static uint32_t stub_spi_timeout_close_count[SPI_MONITOR_BUS_COUNT];
 static bool stub_spi_running[SPI_MONITOR_CHANNEL_COUNT];
 static spi_monitor_rc_t stub_spi_monitor_result = SPI_MONITOR_RC_OK;
 uint64_t stub_gpio_high_mask = UINT64_MAX;
@@ -255,6 +257,7 @@ static spi_monitor_rc_t stub_spi_monitor_set_bus_config(uint32_t bus, const spi_
         }
         if (!stub_spi_running[channel]) {
             stub_spi_packets_emitted[channel] = 0u;
+            stub_spi_transactions_emitted[channel] = 0u;
             stub_spi_overrun_count[channel] = 0u;
         }
     }
@@ -278,7 +281,9 @@ static spi_monitor_rc_t stub_spi_monitor_get_bus_status(uint32_t bus, spi_monito
     status_out->channel_select_mask = stub_spi_channel_select_mask[bus];
     status_out->timeout_us = stub_spi_bus_timeout_us[bus];
     status_out->packets_emitted = stub_spi_packets_emitted[first_channel];
+    status_out->transactions_emitted = stub_spi_transactions_emitted[first_channel];
     status_out->overrun_count = stub_spi_overrun_count[first_channel];
+    status_out->timeout_close_count = stub_spi_timeout_close_count[bus];
     return SPI_MONITOR_RC_OK;
 }
 
@@ -343,7 +348,9 @@ void reset_usb_stub(void) {
     memset(stub_spi_timeout_us, 0, sizeof(stub_spi_timeout_us));
     memset(stub_spi_bus_timeout_us, 0, sizeof(stub_spi_bus_timeout_us));
     memset(stub_spi_packets_emitted, 0, sizeof(stub_spi_packets_emitted));
+    memset(stub_spi_transactions_emitted, 0, sizeof(stub_spi_transactions_emitted));
     memset(stub_spi_overrun_count, 0, sizeof(stub_spi_overrun_count));
+    memset(stub_spi_timeout_close_count, 0, sizeof(stub_spi_timeout_close_count));
     memset(stub_spi_running, 0, sizeof(stub_spi_running));
     stub_spi_monitor_result = SPI_MONITOR_RC_OK;
     stub_dma_configure_fail_next = false;
@@ -1353,13 +1360,15 @@ static void test_cli_spimon_status_reports_bus_state(void) {
     stub_spi_mode[0] = 0u;
     stub_spi_timeout_us[0] = 1200u;
     stub_spi_packets_emitted[0] = 9u;
+    stub_spi_transactions_emitted[0] = 3u;
     stub_spi_overrun_count[0] = 2u;
+    stub_spi_timeout_close_count[0] = 1u;
     load_cdc_rx(payload, sizeof(payload));
 
     tud_cdc_rx_cb(0u);
     device_cli_poll();
 
-    assert(strstr((const char *)stub_cdc_tx_data, "spimon bus0 running select=ch0 capture=mosi mode=0 timeout_us=1200 packets=9 overruns=2") != NULL);
+    assert(strstr((const char *)stub_cdc_tx_data, "spimon bus0 running select=ch0 capture=mosi mode=0 timeout_us=1200 packets=9 txns=3 overruns=2 timeout_closes=1") != NULL);
 }
 
 static void test_cli_spimon_reports_disabled_state(void) {
@@ -2071,7 +2080,9 @@ static void test_hid_spi_monitor_get_status_returns_bus_payload(void) {
     stub_spi_mode[2] = 2u;
     stub_spi_timeout_us[2] = 1800u;
     stub_spi_packets_emitted[2] = 7u;
+    stub_spi_transactions_emitted[2] = 2u;
     stub_spi_overrun_count[2] = 3u;
+    stub_spi_timeout_close_count[1] = 4u;
     command.opcode = USB_HID_OPCODE_SPI_MONITOR_GET_STATUS;
     command.sequence = 13u;
     command.payload_length = 1u;
@@ -2083,7 +2094,7 @@ static void test_hid_spi_monitor_get_status_returns_bus_payload(void) {
     assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
     assert(response.opcode == USB_HID_OPCODE_SPI_MONITOR_GET_STATUS);
     assert(response.status == USB_HID_STATUS_OK);
-    assert(response.payload_length == 46u);
+    assert(response.payload_length == 54u);
     assert(response.payload[0] == 1u);
     assert(response.payload[1] == 1u);
     assert(response.payload[2] == 1u);
@@ -2093,16 +2104,20 @@ static void test_hid_spi_monitor_get_status_returns_bus_payload(void) {
     assert(response.payload[6] == 0x08u);
     assert(response.payload[7] == 0x07u);
     assert(response.payload[8] == 0x00u);
-    assert(response.payload[9] == 0x00u);
     assert(response.payload[10] == 7u);
-    assert(response.payload[14] == 3u);
-    assert(response.payload[18] == 0u);
+    assert(response.payload[18] == 3u);
     assert(response.payload[22] == 0u);
     assert(response.payload[26] == 0u);
     assert(response.payload[30] == 0u);
     assert(response.payload[34] == 0u);
     assert(response.payload[38] == 0u);
     assert(response.payload[42] == 0u);
+    assert(response.payload[46] == 0u);
+    assert(response.payload[50] == 4u);
+    assert(response.payload[38] == 0u);
+    assert(response.payload[42] == 0u);
+    assert(response.payload[46] == 0u);
+    assert(response.payload[50] == 4u);
 }
 
 static void test_hid_spi_monitor_get_all_status_returns_all_channels(void) {

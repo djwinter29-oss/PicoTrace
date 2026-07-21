@@ -20,6 +20,7 @@ public sealed class ControlOperationsTests
             ChannelSelectMask: 0x01,
             TimeoutUs: 50,
             PacketsEmitted: 0,
+            TransactionsEmitted: 0,
             OverrunCount: 0,
             SinkOverrunCount: 0,
             SamplerOverrunCount: 0,
@@ -27,7 +28,8 @@ public sealed class ControlOperationsTests
             UsbStallCount: 0,
             UsbHostBackpressureStallCount: 0,
             UsbPolicyDeferralCount: 0,
-            PeakRingDepthPackets: 0);
+            PeakRingDepthPackets: 0,
+            TimeoutCloseCount: 0);
 
         var apply = ControlOperations.BuildSpiApplyConfig(4, SpiCaptureMode.MosiMiso, 3, 250, currentStatus);
 
@@ -50,6 +52,7 @@ public sealed class ControlOperationsTests
             ChannelSelectMask: 0x03,
             TimeoutUs: 100,
             PacketsEmitted: 0,
+            TransactionsEmitted: 0,
             OverrunCount: 0,
             SinkOverrunCount: 0,
             SamplerOverrunCount: 0,
@@ -57,7 +60,8 @@ public sealed class ControlOperationsTests
             UsbStallCount: 0,
             UsbHostBackpressureStallCount: 0,
             UsbPolicyDeferralCount: 0,
-            PeakRingDepthPackets: 0);
+            PeakRingDepthPackets: 0,
+            TimeoutCloseCount: 0);
 
         var stop = ControlOperations.BuildSpiStopConfig(3, currentStatus);
 
@@ -80,6 +84,7 @@ public sealed class ControlOperationsTests
             ChannelSelectMask: 0x01,
             TimeoutUs: 20,
             PacketsEmitted: 0,
+            TransactionsEmitted: 0,
             OverrunCount: 0,
             SinkOverrunCount: 0,
             SamplerOverrunCount: 0,
@@ -87,7 +92,8 @@ public sealed class ControlOperationsTests
             UsbStallCount: 0,
             UsbHostBackpressureStallCount: 0,
             UsbPolicyDeferralCount: 0,
-            PeakRingDepthPackets: 0);
+            PeakRingDepthPackets: 0,
+            TimeoutCloseCount: 0);
 
         var stop = ControlOperations.BuildSpiStopConfig(0, currentStatus);
 

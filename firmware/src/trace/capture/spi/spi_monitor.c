@@ -75,6 +75,7 @@ typedef struct {
     uint32_t usb_host_backpressure_stall_count_base; /**< Baseline host-backpressure USB stall count captured when the current session started. */
     uint32_t usb_policy_deferral_count_base; /**< Baseline stream-policy deferral count captured when the current session started. */
     uint32_t peak_ring_depth_packets; /**< Peak queued trace-packet depth observed during the current session. */
+    uint32_t timeout_close_count; /**< Number of channel transactions closed by the bus idle-timeout path during the current session. */
 } spi_monitor_bus_state_t;
 
 /** @brief Transaction decode state owned by one logical SPI channel. */
@@ -151,19 +152,75 @@ static uint8_t g_spi_monitor_active_sampler_mask;
 /** @brief Bit mask of observed SPI buses that currently need producer-core polling. */
 static uint8_t g_spi_monitor_poll_bus_mask;
 
-/** @brief Lookup table that compacts nibble bits 2 and 0 into a 2-bit value. */
-static const uint8_t g_spi_monitor_compact_even_nibble[16] = {
-    0u, 1u, 0u, 1u,
-    2u, 3u, 2u, 3u,
-    0u, 1u, 0u, 1u,
-    2u, 3u, 2u, 3u,
+/** @brief Lookup table that compacts alternating even-position sample bits from one byte into a nibble. */
+static const uint8_t g_spi_monitor_compact_even_byte[256] = {
+    0u, 0u, 1u, 1u, 0u, 0u, 1u, 1u,
+    2u, 2u, 3u, 3u, 2u, 2u, 3u, 3u,
+    0u, 0u, 1u, 1u, 0u, 0u, 1u, 1u,
+    2u, 2u, 3u, 3u, 2u, 2u, 3u, 3u,
+    4u, 4u, 5u, 5u, 4u, 4u, 5u, 5u,
+    6u, 6u, 7u, 7u, 6u, 6u, 7u, 7u,
+    4u, 4u, 5u, 5u, 4u, 4u, 5u, 5u,
+    6u, 6u, 7u, 7u, 6u, 6u, 7u, 7u,
+    0u, 0u, 1u, 1u, 0u, 0u, 1u, 1u,
+    2u, 2u, 3u, 3u, 2u, 2u, 3u, 3u,
+    0u, 0u, 1u, 1u, 0u, 0u, 1u, 1u,
+    2u, 2u, 3u, 3u, 2u, 2u, 3u, 3u,
+    4u, 4u, 5u, 5u, 4u, 4u, 5u, 5u,
+    6u, 6u, 7u, 7u, 6u, 6u, 7u, 7u,
+    4u, 4u, 5u, 5u, 4u, 4u, 5u, 5u,
+    6u, 6u, 7u, 7u, 6u, 6u, 7u, 7u,
+    8u, 8u, 9u, 9u, 8u, 8u, 9u, 9u,
+    10u, 10u, 11u, 11u, 10u, 10u, 11u, 11u,
+    8u, 8u, 9u, 9u, 8u, 8u, 9u, 9u,
+    10u, 10u, 11u, 11u, 10u, 10u, 11u, 11u,
+    12u, 12u, 13u, 13u, 12u, 12u, 13u, 13u,
+    14u, 14u, 15u, 15u, 14u, 14u, 15u, 15u,
+    12u, 12u, 13u, 13u, 12u, 12u, 13u, 13u,
+    14u, 14u, 15u, 15u, 14u, 14u, 15u, 15u,
+    8u, 8u, 9u, 9u, 8u, 8u, 9u, 9u,
+    10u, 10u, 11u, 11u, 10u, 10u, 11u, 11u,
+    8u, 8u, 9u, 9u, 8u, 8u, 9u, 9u,
+    10u, 10u, 11u, 11u, 10u, 10u, 11u, 11u,
+    12u, 12u, 13u, 13u, 12u, 12u, 13u, 13u,
+    14u, 14u, 15u, 15u, 14u, 14u, 15u, 15u,
+    12u, 12u, 13u, 13u, 12u, 12u, 13u, 13u,
+    14u, 14u, 15u, 15u, 14u, 14u, 15u, 15u,
 };
-/** @brief Lookup table that compacts nibble bits 3 and 1 into a 2-bit value. */
-static const uint8_t g_spi_monitor_compact_odd_nibble[16] = {
-    0u, 0u, 1u, 1u,
-    0u, 0u, 1u, 1u,
-    2u, 2u, 3u, 3u,
-    2u, 2u, 3u, 3u,
+/** @brief Lookup table that compacts alternating odd-position sample bits from one byte into a nibble. */
+static const uint8_t g_spi_monitor_compact_odd_byte[256] = {
+    0u, 1u, 0u, 1u, 2u, 3u, 2u, 3u,
+    0u, 1u, 0u, 1u, 2u, 3u, 2u, 3u,
+    4u, 5u, 4u, 5u, 6u, 7u, 6u, 7u,
+    4u, 5u, 4u, 5u, 6u, 7u, 6u, 7u,
+    0u, 1u, 0u, 1u, 2u, 3u, 2u, 3u,
+    0u, 1u, 0u, 1u, 2u, 3u, 2u, 3u,
+    4u, 5u, 4u, 5u, 6u, 7u, 6u, 7u,
+    4u, 5u, 4u, 5u, 6u, 7u, 6u, 7u,
+    8u, 9u, 8u, 9u, 10u, 11u, 10u, 11u,
+    8u, 9u, 8u, 9u, 10u, 11u, 10u, 11u,
+    12u, 13u, 12u, 13u, 14u, 15u, 14u, 15u,
+    12u, 13u, 12u, 13u, 14u, 15u, 14u, 15u,
+    8u, 9u, 8u, 9u, 10u, 11u, 10u, 11u,
+    8u, 9u, 8u, 9u, 10u, 11u, 10u, 11u,
+    12u, 13u, 12u, 13u, 14u, 15u, 14u, 15u,
+    12u, 13u, 12u, 13u, 14u, 15u, 14u, 15u,
+    0u, 1u, 0u, 1u, 2u, 3u, 2u, 3u,
+    0u, 1u, 0u, 1u, 2u, 3u, 2u, 3u,
+    4u, 5u, 4u, 5u, 6u, 7u, 6u, 7u,
+    4u, 5u, 4u, 5u, 6u, 7u, 6u, 7u,
+    0u, 1u, 0u, 1u, 2u, 3u, 2u, 3u,
+    0u, 1u, 0u, 1u, 2u, 3u, 2u, 3u,
+    4u, 5u, 4u, 5u, 6u, 7u, 6u, 7u,
+    4u, 5u, 4u, 5u, 6u, 7u, 6u, 7u,
+    8u, 9u, 8u, 9u, 10u, 11u, 10u, 11u,
+    8u, 9u, 8u, 9u, 10u, 11u, 10u, 11u,
+    12u, 13u, 12u, 13u, 14u, 15u, 14u, 15u,
+    12u, 13u, 12u, 13u, 14u, 15u, 14u, 15u,
+    8u, 9u, 8u, 9u, 10u, 11u, 10u, 11u,
+    8u, 9u, 8u, 9u, 10u, 11u, 10u, 11u,
+    12u, 13u, 12u, 13u, 14u, 15u, 14u, 15u,
+    12u, 13u, 12u, 13u, 14u, 15u, 14u, 15u,
 };
 
 static void spi_monitor_cs_irq_callback(uint gpio, uint32_t events);
@@ -264,6 +321,15 @@ static void spi_monitor_note_bus_ring_depth(uint32_t bus);
 /** @brief Clear one logical SPI channel back to the stopped session state. */
 static void spi_monitor_reset_channel_state(spi_monitor_channel_state_t *channel_state);
 
+/** @brief Extract one MOSI byte from a packed 16-bit raw sampler word. */
+static uint8_t spi_monitor_extract_mosi_byte(uint32_t packed_samples);
+
+/** @brief Extract one MISO byte from a packed 16-bit raw sampler word. */
+static uint8_t spi_monitor_extract_miso_byte(uint32_t packed_samples);
+
+/** @brief Extract one MOSI byte from a MOSI-only raw sampler word. */
+static uint8_t spi_monitor_extract_mosi_only_byte(uint32_t raw_samples);
+
 /** @brief Reset packet-builder state for one logical SPI channel. */
 static void spi_monitor_packet_builder_reset(spi_monitor_packet_builder_t *builder) {
     builder->packet_open = false;
@@ -300,11 +366,6 @@ void spi_monitor_internal_abort_bus_transaction(uint32_t bus) {
         spi_monitor_discard_channel_packets(channel);
         spi_monitor_reset_channel_runtime(&g_spi_monitor_channel_runtimes[channel]);
     }
-}
-
-/** @brief Compact alternating sample bits from one byte using the supplied nibble compactor table. */
-static uint8_t spi_monitor_compact_sample_byte(uint8_t packed_byte, const uint8_t nibble_table[16]) {
-    return (uint8_t)((nibble_table[packed_byte >> 4u] << 2u) | nibble_table[packed_byte & 0x0Fu]);
 }
 
 /** @brief Clear all session counters for the logical channels owned by one observed SPI bus. */
@@ -395,19 +456,16 @@ static bool spi_monitor_packet_builder_flush(
     return true;
 }
 
-/** @brief Append one SPI data byte pair, emitting a fragment first if the next bytes would exceed @ref TRACE_PACKET_PAYLOAD_BYTES. */
-static void spi_monitor_channel_append_byte_pair(
+/** @brief Ensure the current SPI fragment is open and has room for the requested payload bytes. */
+static void spi_monitor_packet_builder_ensure_room(
     uint32_t bus,
     spi_monitor_packet_builder_t *builder,
     spi_monitor_channel_state_t *channel_state,
     spi_monitor_capture_t capture,
     uint8_t logical_channel,
     uint32_t transaction_timestamp_us,
-    uint8_t mosi_byte,
-    uint8_t miso_byte
+    uint16_t bytes_needed
 ) {
-    uint16_t bytes_needed = (capture == SPI_MONITOR_CAPTURE_MOSI_MISO) ? 2u : 1u;
-
     if (!builder->packet_open) {
         spi_monitor_packet_builder_begin(builder, channel_state, capture, logical_channel, transaction_timestamp_us);
     }
@@ -417,9 +475,92 @@ static void spi_monitor_channel_append_byte_pair(
         spi_monitor_packet_builder_begin(builder, channel_state, capture, logical_channel, transaction_timestamp_us);
     }
 
-    builder->packet.payload[builder->payload_offset++] = mosi_byte;
-    if (capture == SPI_MONITOR_CAPTURE_MOSI_MISO) {
-        builder->packet.payload[builder->payload_offset++] = miso_byte;
+}
+
+/** @brief Append MOSI-only bytes in chunked fragments to reduce per-word packet bookkeeping. */
+static void spi_monitor_channel_append_mosi_words(
+    uint32_t bus,
+    spi_monitor_packet_builder_t *builder,
+    spi_monitor_channel_state_t *channel_state,
+    uint8_t logical_channel,
+    uint32_t transaction_timestamp_us,
+    const uint32_t *raw_words,
+    uint32_t raw_word_count
+) {
+    uint32_t word_index = 0u;
+
+    while (word_index < raw_word_count) {
+        uint32_t chunk_words;
+        uint32_t available_words;
+
+        spi_monitor_packet_builder_ensure_room(
+            bus,
+            builder,
+            channel_state,
+            SPI_MONITOR_CAPTURE_MOSI,
+            logical_channel,
+            transaction_timestamp_us,
+            1u
+        );
+
+        available_words = TRACE_PACKET_PAYLOAD_BYTES - builder->payload_offset;
+        chunk_words = raw_word_count - word_index;
+        if (chunk_words > available_words) {
+            chunk_words = available_words;
+        }
+
+        for (uint32_t chunk_index = 0u; chunk_index < chunk_words; ++chunk_index) {
+            builder->packet.payload[builder->payload_offset++] = spi_monitor_extract_mosi_only_byte(raw_words[word_index++]);
+        }
+
+        if ((builder->payload_offset == TRACE_PACKET_PAYLOAD_BYTES) && (word_index < raw_word_count)) {
+            (void)spi_monitor_packet_builder_flush(bus, builder, channel_state, 0u, false);
+        }
+    }
+}
+
+/** @brief Append MOSI+MISO byte pairs in chunked fragments to reduce per-word packet bookkeeping. */
+static void spi_monitor_channel_append_mosi_miso_words(
+    uint32_t bus,
+    spi_monitor_packet_builder_t *builder,
+    spi_monitor_channel_state_t *channel_state,
+    uint8_t logical_channel,
+    uint32_t transaction_timestamp_us,
+    const uint32_t *raw_words,
+    uint32_t raw_word_count
+) {
+    uint32_t word_index = 0u;
+
+    while (word_index < raw_word_count) {
+        uint32_t chunk_words;
+        uint32_t available_words;
+
+        spi_monitor_packet_builder_ensure_room(
+            bus,
+            builder,
+            channel_state,
+            SPI_MONITOR_CAPTURE_MOSI_MISO,
+            logical_channel,
+            transaction_timestamp_us,
+            2u
+        );
+
+        available_words = (TRACE_PACKET_PAYLOAD_BYTES - builder->payload_offset) / 2u;
+        chunk_words = raw_word_count - word_index;
+        if (chunk_words > available_words) {
+            chunk_words = available_words;
+        }
+
+        for (uint32_t chunk_index = 0u; chunk_index < chunk_words; ++chunk_index) {
+            uint32_t packed_samples = raw_words[word_index++];
+
+            builder->packet.payload[builder->payload_offset++] = spi_monitor_extract_mosi_byte(packed_samples);
+            builder->packet.payload[builder->payload_offset++] = spi_monitor_extract_miso_byte(packed_samples);
+        }
+
+        if ((builder->payload_offset == TRACE_PACKET_PAYLOAD_BYTES) && (word_index < raw_word_count)) {
+            (void)spi_monitor_packet_builder_flush(bus, builder, channel_state, 0u, false);
+        }
     }
 }
 
@@ -475,8 +616,8 @@ static uint8_t spi_monitor_extract_mosi_byte(uint32_t packed_samples) {
     uint8_t lower = (uint8_t)packed_samples;
 
     return (uint8_t)(
-        (spi_monitor_compact_sample_byte(upper, g_spi_monitor_compact_even_nibble) << 4u)
-        | spi_monitor_compact_sample_byte(lower, g_spi_monitor_compact_even_nibble)
+        (g_spi_monitor_compact_odd_byte[upper] << 4u)
+        | g_spi_monitor_compact_odd_byte[lower]
     );
 }
 
@@ -486,8 +627,8 @@ static uint8_t spi_monitor_extract_miso_byte(uint32_t packed_samples) {
     uint8_t lower = (uint8_t)packed_samples;
 
     return (uint8_t)(
-        (spi_monitor_compact_sample_byte(upper, g_spi_monitor_compact_odd_nibble) << 4u)
-        | spi_monitor_compact_sample_byte(lower, g_spi_monitor_compact_odd_nibble)
+        (g_spi_monitor_compact_even_byte[upper] << 4u)
+        | g_spi_monitor_compact_even_byte[lower]
     );
 }
 
@@ -591,6 +732,38 @@ static void spi_monitor_enqueue_channel_boundary(uint32_t sampler, uint32_t boun
     sampler_state->boundary_count += 1u;
 }
 
+/** @brief Return the next queued CS boundary that falls within one contiguous DMA span. */
+static bool spi_monitor_next_channel_boundary_in_span(
+    const spi_monitor_channel_sampler_state_t *sampler_state,
+    uint32_t span_start,
+    uint32_t span_end,
+    uint32_t *boundary_offset
+) {
+    uint32_t next_boundary;
+
+    if ((sampler_state->boundary_count == 0u) || (boundary_offset == NULL)) {
+        return false;
+    }
+
+    next_boundary = sampler_state->boundary_offsets[sampler_state->boundary_head];
+    if ((next_boundary < span_start) || (next_boundary > span_end)) {
+        return false;
+    }
+
+    *boundary_offset = next_boundary;
+    return true;
+}
+
+/** @brief Consume the next queued CS boundary after its transaction close has been applied. */
+static void spi_monitor_pop_channel_boundary(spi_monitor_channel_sampler_state_t *sampler_state) {
+    if (sampler_state->boundary_count == 0u) {
+        return;
+    }
+
+    sampler_state->boundary_head = (uint8_t)((sampler_state->boundary_head + 1u) % SPI_MONITOR_BOUNDARY_QUEUE_LENGTH);
+    sampler_state->boundary_count -= 1u;
+}
+
 /** @brief Latch the current DMA write position as a transaction boundary for one running sampler. */
 static void spi_monitor_latch_channel_boundary(uint32_t sampler) {
     spi_monitor_channel_sampler_state_t *sampler_state = &g_spi_monitor_channel_samplers[sampler];
@@ -647,33 +820,25 @@ static void spi_monitor_internal_process_channel_words(
     transaction_timestamp_us = channel_runtime->transaction_timestamp_us;
 
     if (capture == SPI_MONITOR_CAPTURE_MOSI_MISO) {
-        for (uint32_t word_index = 0u; word_index < raw_word_count; ++word_index) {
-            uint32_t packed_samples = raw_words[word_index];
-
-            spi_monitor_channel_append_byte_pair(
-                bus,
-                builder,
-                channel_state,
-                capture,
-                logical_channel,
-                transaction_timestamp_us,
-                spi_monitor_extract_mosi_byte(packed_samples),
-                spi_monitor_extract_miso_byte(packed_samples)
-            );
-        }
+        spi_monitor_channel_append_mosi_miso_words(
+            bus,
+            builder,
+            channel_state,
+            logical_channel,
+            transaction_timestamp_us,
+            raw_words,
+            raw_word_count
+        );
     } else {
-        for (uint32_t word_index = 0u; word_index < raw_word_count; ++word_index) {
-            spi_monitor_channel_append_byte_pair(
-                bus,
-                builder,
-                channel_state,
-                capture,
-                logical_channel,
-                transaction_timestamp_us,
-                spi_monitor_extract_mosi_only_byte(raw_words[word_index]),
-                0u
-            );
-        }
+        spi_monitor_channel_append_mosi_words(
+            bus,
+            builder,
+            channel_state,
+            logical_channel,
+            transaction_timestamp_us,
+            raw_words,
+            raw_word_count
+        );
     }
 
     channel_runtime->last_activity_timestamp_us = timestamp_us;
@@ -700,6 +865,7 @@ void spi_monitor_internal_poll_bus_timeout(uint32_t bus, uint32_t now_us) {
 
         elapsed_us = (int32_t)(now_us - channel_runtime->last_activity_timestamp_us);
         if ((elapsed_us >= 0) && ((uint32_t)elapsed_us >= timeout_us)) {
+            g_spi_monitor_buses[bus].timeout_close_count += 1u;
             spi_monitor_close_channel_transaction(channel, 0u);
         }
     }
@@ -981,48 +1147,36 @@ static void spi_monitor_consume_channel_sampler_words(uint32_t sampler, uint32_t
     spi_monitor_channel_sampler_state_t *sampler_state = &g_spi_monitor_channel_samplers[sampler];
     const uint32_t *raw_words = &g_spi_monitor_channel_sampler_dma_buffers[sampler][0][0] + word_offset;
     uint32_t cursor = word_offset;
-    uint32_t remaining = word_count;
+    uint32_t chunk_end = word_offset + word_count;
 
     if (word_count == 0u) {
         return;
     }
 
-    while (remaining != 0u) {
-        bool have_boundary = false;
-        uint32_t boundary_offset = 0u;
+    while (cursor < chunk_end) {
+        uint32_t boundary_offset;
+        uint32_t span_end = chunk_end;
 
-        if (sampler_state->boundary_count != 0u) {
-            boundary_offset = sampler_state->boundary_offsets[sampler_state->boundary_head];
-            have_boundary = (boundary_offset >= cursor) && (boundary_offset <= (word_offset + word_count));
+        if (spi_monitor_next_channel_boundary_in_span(sampler_state, cursor, chunk_end, &boundary_offset)) {
+            span_end = boundary_offset;
         }
 
-        if (have_boundary) {
-            uint32_t span_words = boundary_offset - cursor;
-
-            if (span_words != 0u) {
-                spi_monitor_internal_process_channel_words(
-                    sampler,
-                    spi_monitor_timestamp_us(),
-                    raw_words + (cursor - word_offset),
-                    span_words
-                );
-                cursor += span_words;
-                remaining -= span_words;
-            }
-
-            spi_monitor_close_channel_transaction(sampler, 0u);
-            sampler_state->boundary_head = (uint8_t)((sampler_state->boundary_head + 1u) % SPI_MONITOR_BOUNDARY_QUEUE_LENGTH);
-            sampler_state->boundary_count -= 1u;
-            continue;
+        if (span_end != cursor) {
+            spi_monitor_internal_process_channel_words(
+                sampler,
+                spi_monitor_timestamp_us(),
+                raw_words + (cursor - word_offset),
+                span_end - cursor
+            );
+            cursor = span_end;
         }
 
-        spi_monitor_internal_process_channel_words(
-            sampler,
-            spi_monitor_timestamp_us(),
-            raw_words + (cursor - word_offset),
-            remaining
-        );
-        break;
+        if (cursor == chunk_end) {
+            break;
+        }
+
+        spi_monitor_close_channel_transaction(sampler, 0u);
+        spi_monitor_pop_channel_boundary(sampler_state);
     }
 }
 
@@ -1083,6 +1237,7 @@ static void spi_monitor_reset_bus_state(spi_monitor_bus_state_t *bus_state) {
     bus_state->usb_host_backpressure_stall_count_base = 0u;
     bus_state->usb_policy_deferral_count_base = 0u;
     bus_state->peak_ring_depth_packets = 0u;
+    bus_state->timeout_close_count = 0u;
 }
 
 /** @brief Update the session peak for queued trace packets from one producer-poll snapshot. */
@@ -1122,6 +1277,7 @@ static void spi_monitor_fill_status(uint32_t channel, spi_monitor_channel_status
 static void spi_monitor_fill_bus_status(uint32_t bus, spi_monitor_bus_status_t *status_out) {
     const spi_monitor_bus_state_t *bus_state = &g_spi_monitor_buses[bus];
     uint32_t packets_emitted = 0u;
+    uint32_t transactions_emitted = 0u;
     uint32_t sink_overrun_count = 0u;
     uint32_t sampler_overrun_count = spi_monitor_bus_sampler_overrun_count(bus);
     uint32_t first_channel;
@@ -1130,6 +1286,7 @@ static void spi_monitor_fill_bus_status(uint32_t bus, spi_monitor_bus_status_t *
     spi_monitor_bus_channel_range(bus, &first_channel, &end_channel);
     for (uint32_t channel = first_channel; channel < end_channel; ++channel) {
         packets_emitted += g_spi_monitor_channels[channel].packets_emitted;
+        transactions_emitted += g_spi_monitor_channels[channel].transactions_emitted;
         sink_overrun_count += g_spi_monitor_channels[channel].sink_overrun_count;
     }
 
@@ -1141,6 +1298,7 @@ static void spi_monitor_fill_bus_status(uint32_t bus, spi_monitor_bus_status_t *
     status_out->channel_select_mask = bus_state->channel_select_mask;
     status_out->timeout_us = bus_state->timeout_us;
     status_out->packets_emitted = packets_emitted;
+    status_out->transactions_emitted = transactions_emitted;
     status_out->overrun_count = sink_overrun_count + sampler_overrun_count;
     status_out->sink_overrun_count = sink_overrun_count;
     status_out->sampler_overrun_count = sampler_overrun_count;
@@ -1149,6 +1307,7 @@ static void spi_monitor_fill_bus_status(uint32_t bus, spi_monitor_bus_status_t *
     status_out->usb_host_backpressure_stall_count = usb_bulk_host_backpressure_stall_count() - bus_state->usb_host_backpressure_stall_count_base;
     status_out->usb_policy_deferral_count = usb_bulk_policy_deferral_count() - bus_state->usb_policy_deferral_count_base;
     status_out->peak_ring_depth_packets = bus_state->peak_ring_depth_packets;
+    status_out->timeout_close_count = bus_state->timeout_close_count;
 }
 
 /** @copydoc spi_monitor_init */
@@ -1289,6 +1448,7 @@ spi_monitor_rc_t spi_monitor_set_bus_config(uint32_t bus, const spi_monitor_bus_
     bus_state->usb_host_backpressure_stall_count_base = usb_bulk_host_backpressure_stall_count();
     bus_state->usb_policy_deferral_count_base = usb_bulk_policy_deferral_count();
     bus_state->peak_ring_depth_packets = trace_ring_available();
+    bus_state->timeout_close_count = 0u;
     for (channel = first_channel; channel < spi_monitor_bus_first_channel(bus) + SPI_MONITOR_CS_SLOTS_PER_BUS; ++channel) {
         spi_monitor_reset_channel_runtime(&g_spi_monitor_channel_runtimes[channel]);
     }

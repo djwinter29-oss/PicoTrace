@@ -68,11 +68,11 @@ These are the current reference results on the `250 MHz` RP2040 baseline.
 | `16.0 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
 | `16.5 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
 | `17.0 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
-| `17.5 MHz` | `3/3` | Current highest verified lossless pass point after adding the dedicated MOSI-only sampler |
-| `18.0 MHz` | `2/3` | New unstable downstream-limited point; failing trial hit `sink=5 ring=5 peak=256` |
+| `17.5 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
+| `18.0 MHz` | `3/3` | Current highest verified lossless pass point after flattening the SPI decode loop and switching MOSI+MISO lane compaction to byte lookup tables |
 
 Observed transmit throughput across the verified MOSI pass points at `250 MHz` was about
-`7.4-8.3 Mb/s` over the full transfer window.
+`7.4-8.5 Mb/s` over the full transfer window.
 
 ### MOSI + MISO At 250 MHz
 
@@ -157,6 +157,101 @@ Current interpretation:
 - the whole-packet fast path plus counter split coincided with a clean `3/3` recheck at MOSI+MISO `5.8 MHz`, so the current branch no longer shows the earlier downstream-limited failure at that point
 - the dedicated MOSI-only sampler materially improved the RP2040 MOSI ceiling: the best current clean point moved from `17.0 MHz` to `17.5 MHz`, and `18.0 MHz` is now the first unstable edge
 - the MOSI-only sampler split did not regress MOSI+MISO or I2C behavior on the latest bench run
+
+### RP2040 SPI Decode Hot-Path Probe On 2026-07-21
+
+Focused commands used after flattening the SPI decode loop and replacing MOSI+MISO nibble compaction with byte lookup tables:
+
+- `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico --skip-build`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi --speed-hz 17000000 17500000 18000000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi-miso --speed-hz 5800000 5900000 6000000 --trials 3`
+- `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
+
+Observed results on the decode-optimized build:
+
+- MOSI `17.0 MHz`: `3/3`, with `sink=0 sampler=0 ring=0`, `policy_deferrals=0`, and `peak` between `211` and `243`
+- MOSI `17.5 MHz`: `3/3`, with `sink=0 sampler=0 ring=0`, `policy_deferrals=0`, and `peak` between `239` and `243`
+- MOSI `18.0 MHz`: `3/3`, now clean across all three trials, with `sink=0 sampler=0 ring=0`, `policy_deferrals=0`, and one trial reaching `peak=255`
+- MOSI+MISO `5.8 MHz`: `3/3`, with `sink=0 sampler=0 ring=0`, `policy_deferrals=0`, and `peak` between `21` and `222`
+- MOSI+MISO `5.9 MHz`: `1/3`; failing trials remained downstream-limited with `sink=ring` in the low `50s` and `peak=256`
+- MOSI+MISO `6.0 MHz`: `1/3`; failing trials remained downstream-limited, while the one passing trial reported `policy_deferrals=6`
+- I2C smoke test: unchanged at `112` transactions with balanced `starts=112`, `stops=112`, `overruns=0`, and `sticky=0`
+
+Current interpretation:
+
+- flattening the SPI decode loop and removing the remaining nibble compaction from the MOSI+MISO path improved the RP2040 MOSI-only ceiling again; the best current clean point moved from `17.5 MHz` to `18.0 MHz`
+- MOSI+MISO behavior is effectively unchanged at the current edge: `5.8 MHz` stays clean while `5.9 MHz` and above remain downstream-limited on this branch
+- the I2C trace smoke baseline stayed unchanged, so the SPI decode-path rewrite did not disturb the shared trace or control path behavior in this bench check
+
+### RP2040 SPI Boundary-Loop Shape Probe On 2026-07-21
+
+Focused commands used after simplifying the SPI DMA boundary-consumption loop shape:
+
+- `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico --skip-build`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi --speed-hz 18000000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi --speed-hz 17500000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi-miso --speed-hz 5800000 --trials 3`
+- `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
+
+Observed results on the boundary-loop rewrite build:
+
+- MOSI `18.0 MHz`: `1/3`; failing trials showed mixed loss signatures, including one with `sampler=1 sink=21 ring=21 peak=256` and another with `sampler=0 sink=25 ring=25 peak=256`
+- MOSI `17.5 MHz`: `3/3`, with `sink=0 sampler=0 ring=0`, `policy_deferrals=0`, and `peak` between `241` and `244`
+- MOSI+MISO `5.8 MHz`: `3/3`, with `sink=0 sampler=0 ring=0`, `policy_deferrals=0`, and `peak` between `119` and `231`
+- I2C smoke test: unchanged at `112` transactions with balanced `starts=112`, `stops=112`, `overruns=0`, and `sticky=0`
+
+Current interpretation:
+
+- the boundary-loop shape cleanup preserved hosted behavior and non-MOSI live baselines, but it regressed the current RP2040 MOSI-only `18.0 MHz` edge back to an unstable `1/3`
+- `17.5 MHz` remains the current clean MOSI-only point on this build, so the rewrite appears to be another layout-sensitive change rather than an obvious packet-boundary logic defect
+- MOSI+MISO `5.8 MHz` and the I2C smoke baseline stayed unchanged in the same bench pass
+
+### RP2040 SPI Decode Observability Probe On 2026-07-21
+
+Focused commands used after exposing `transactions_emitted` and `timeout_close_count` through the SPI status surface and benchmark script:
+
+- `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico --skip-build`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi --speed-hz 18000000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi-miso --speed-hz 5900000 --trials 3`
+- `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
+
+Observed results on the observability build:
+
+- MOSI `18.0 MHz`: still `1/3`, with `host_stalls` dominant, `policy_deferrals=0`, and `txns=2 timeout_closes=2` on every trial
+- MOSI+MISO `5.9 MHz`: still `1/3`, with `host_stalls` dominant, `policy_deferrals` between `0` and `3`, and `txns` exactly matching `timeout_closes` on all three trials (`10`, `5`, `2`)
+- I2C smoke test: unchanged at `112` transactions with balanced `starts=112`, `stops=112`, `overruns=0`, and `sticky=0`
+
+Current interpretation:
+
+- the added counters did not change the current RP2040 benchmark envelope: MOSI `18.0 MHz` remains unstable on the current branch, MOSI+MISO `5.9 MHz` remains unstable, and the I2C smoke baseline is unchanged
+- the new decode-side signal is already useful: on these benchmark runs, `transactions_emitted` matched `timeout_close_count`, which means transaction closure was dominated by the idle-timeout path rather than explicit CS-boundary closure
+- that makes the next dual-lane investigation more precise: before changing PIO or state-machine allocation again, first verify whether timeout-driven transaction segmentation is intentional for the benchmark workload or whether boundary capture is leaving decode-side information on the table
+
+### RP2040 Design Recheck On 2026-07-21
+
+Focused commands used for a fresh end-to-end design check on the current branch:
+
+- `ctest --test-dir build/tests --output-on-failure`
+- `cmake --build build/firmware-pico --target picotrace`
+- `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico --skip-build`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi --speed-hz 17500000 18000000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi-miso --speed-hz 5800000 5900000 --trials 3`
+- `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
+
+Observed results on the recheck build:
+
+- hosted tests: still clean (`usb_app_test` and `i2c_monitor_runtime_test` passed)
+- MOSI `17.5 MHz`: `3/3`, with `sink=0 sampler=0 ring=0`, `policy_deferrals=0`, and `timeout_closes=2`
+- MOSI `18.0 MHz`: `3/3`, with `sink=0 sampler=0 ring=0`, `policy_deferrals=0`, and `timeout_closes=2`
+- MOSI+MISO `5.8 MHz`: regressed to `1/3`; failing trials were downstream-limited with `sink=ring` at `2-3`, `peak=256`, and `timeout_closes=2`
+- MOSI+MISO `5.9 MHz`: stayed `1/3`; failing trials were downstream-limited with `sink=ring` at `121-135`, `peak=256`, and `timeout_closes=2`
+- I2C smoke test: unchanged at `112` transactions with balanced `starts=112`, `stops=112`, `overruns=0`, and `sticky=0`
+
+Current interpretation:
+
+- the current design still looks solid for MOSI-only capture and for the I2C smoke baseline on RP2040
+- the dual-lane path is not currently solid at its previous reference point on this build: even `5.8 MHz` fell back to an unstable `1/3`
+- the new decode-side counters still point away from sampler pressure and toward downstream behavior on the failing dual-lane trials, because failures remained `sampler=0` while `sink=ring` and `peak=256` climbed
 
 ## Current I2C Trace Baseline
 

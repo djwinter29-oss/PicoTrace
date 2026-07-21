@@ -81,6 +81,7 @@ class TrialResult:
     mosi_bytes: int
     miso_bytes: int | None
     packets_emitted: int
+    transactions_emitted: int
     overrun_count: int
     sink_overrun_count: int
     sampler_overrun_count: int
@@ -89,6 +90,7 @@ class TrialResult:
     usb_host_backpressure_stall_count: int
     usb_policy_deferral_count: int
     peak_ring_depth_packets: int
+    timeout_close_count: int
     throughput_mbps: float
     window_seconds: float
 
@@ -266,6 +268,7 @@ def collect_stream(config: BenchmarkConfig, marker: bytes, expected: bytes) -> T
             mosi_bytes=len(raw_mosi),
             miso_bytes=len(raw_miso) if config.capture_mode is SpiCaptureMode.MOSI_MISO else None,
             packets_emitted=status.packets_emitted,
+            transactions_emitted=status.transactions_emitted,
             overrun_count=status.overrun_count,
             sink_overrun_count=status.sink_overrun_count,
             sampler_overrun_count=status.sampler_overrun_count,
@@ -274,6 +277,7 @@ def collect_stream(config: BenchmarkConfig, marker: bytes, expected: bytes) -> T
             usb_host_backpressure_stall_count=status.usb_host_backpressure_stall_count,
             usb_policy_deferral_count=status.usb_policy_deferral_count,
             peak_ring_depth_packets=status.peak_ring_depth_packets,
+            timeout_close_count=status.timeout_close_count,
             throughput_mbps=throughput_mbps,
             window_seconds=tx_seconds,
         )
@@ -291,6 +295,7 @@ def collect_stream(config: BenchmarkConfig, marker: bytes, expected: bytes) -> T
         mosi_bytes=len(stress_mosi),
         miso_bytes=len(stress_miso) if config.capture_mode is SpiCaptureMode.MOSI_MISO else None,
         packets_emitted=status.packets_emitted,
+        transactions_emitted=status.transactions_emitted,
         overrun_count=status.overrun_count,
         sink_overrun_count=status.sink_overrun_count,
         sampler_overrun_count=status.sampler_overrun_count,
@@ -299,6 +304,7 @@ def collect_stream(config: BenchmarkConfig, marker: bytes, expected: bytes) -> T
         usb_host_backpressure_stall_count=status.usb_host_backpressure_stall_count,
         usb_policy_deferral_count=status.usb_policy_deferral_count,
         peak_ring_depth_packets=status.peak_ring_depth_packets,
+        timeout_close_count=status.timeout_close_count,
         throughput_mbps=throughput_mbps,
         window_seconds=tx_seconds,
     )
@@ -313,11 +319,12 @@ def format_trial(index: int, total_bytes: int, capture_mode: SpiCaptureMode, res
         f"trial{index}:{'PASS' if result.ok else 'FAIL'} "
         f"mosi={result.mosi_bytes}/{total_bytes}{miso_text} "
         f"mismatch={result.mismatch} tx={result.throughput_mbps:.2f}Mb/s "
-        f"window={result.window_seconds:.2f}s packets={result.packets_emitted} "
+        f"window={result.window_seconds:.2f}s packets={result.packets_emitted} txns={result.transactions_emitted} "
         f"overruns={result.overrun_count} sink={result.sink_overrun_count} "
         f"sampler={result.sampler_overrun_count} ring={result.ring_drop_count} "
         f"stalls={result.usb_stall_count} host_stalls={result.usb_host_backpressure_stall_count} "
-        f"policy_deferrals={result.usb_policy_deferral_count} peak={result.peak_ring_depth_packets}"
+        f"policy_deferrals={result.usb_policy_deferral_count} peak={result.peak_ring_depth_packets} "
+        f"timeout_closes={result.timeout_close_count}"
     )
 
 
