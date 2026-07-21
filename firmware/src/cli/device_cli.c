@@ -10,8 +10,8 @@
 #include <string.h>
 
 #include "app_control.h"
-#include "trace/capture/i2c_monitor_control.h"
-#include "trace/capture/spi_monitor_control.h"
+#include "trace/capture/i2c/i2c_monitor_control.h"
+#include "trace/capture/spi/spi_monitor_control.h"
 
 /** @brief Write the CLI help text. */
 static bool device_cli_help(int argc, const char *const *argv);

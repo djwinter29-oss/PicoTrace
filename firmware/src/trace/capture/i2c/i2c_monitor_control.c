@@ -3,7 +3,7 @@
  * @brief Blocking command bridge for producer-core-owned I2C monitor control.
  */
 
-#include "trace/capture/i2c_monitor_control.h"
+#include "trace/capture/i2c/i2c_monitor_control.h"
 
 #include <string.h>
 

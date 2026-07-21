@@ -9,7 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "trace/capture/i2c_monitor.h"
+#include "trace/capture/i2c/i2c_monitor.h"
 
 typedef i2c_monitor_rc_t (*i2c_monitor_control_set_channel_fn)(uint32_t channel, uint32_t sample_hz);
 typedef i2c_monitor_rc_t (*i2c_monitor_control_get_status_fn)(uint32_t channel, i2c_monitor_channel_status_t *status_out);

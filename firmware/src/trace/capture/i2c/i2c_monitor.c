@@ -7,7 +7,7 @@
  * decoded events into the shared trace ring.
  */
 
-#include "trace/capture/i2c_monitor.h"
+#include "trace/capture/i2c/i2c_monitor.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -24,8 +24,8 @@
 
 #include "app_control.h"
 #include "config/i2c_monitor_config.h"
-#include "trace/decode/i2c_decoder.h"
-#include "trace/decode/i2c_trace_packet.h"
+#include "trace/decode/i2c/i2c_decoder.h"
+#include "trace/decode/i2c/i2c_trace_packet.h"
 #include "trace/trace_ring.h"
 
 #include "i2c_monitor.pio.h"

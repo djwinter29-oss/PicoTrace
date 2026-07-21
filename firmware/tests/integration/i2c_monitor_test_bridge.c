@@ -2,7 +2,7 @@
 
 #include <string.h>
 
-#include "trace/capture/i2c_monitor.c"
+#include "trace/capture/i2c/i2c_monitor.c"
 
 void i2c_monitor_test_reset(void) {
     if (g_i2c_monitor_initialized) {

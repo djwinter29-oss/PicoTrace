@@ -19,13 +19,13 @@ For the higher-level component view around this design, see:
 
 This design covers:
 
-- `firmware/src/trace/capture/i2c_monitor.pio`
-- `firmware/src/trace/capture/i2c_monitor.c`
-- `firmware/src/trace/capture/i2c_monitor.h`
-- `firmware/src/trace/decode/i2c_decoder.c`
-- `firmware/src/trace/decode/i2c_decoder.h`
-- `firmware/src/trace/decode/i2c_trace_packet.c`
-- `firmware/src/trace/decode/i2c_trace_packet.h`
+- `firmware/src/trace/capture/i2c/i2c_monitor.pio`
+- `firmware/src/trace/capture/i2c/i2c_monitor.c`
+- `firmware/src/trace/capture/i2c/i2c_monitor.h`
+- `firmware/src/trace/decode/i2c/i2c_decoder.c`
+- `firmware/src/trace/decode/i2c/i2c_decoder.h`
+- `firmware/src/trace/decode/i2c/i2c_trace_packet.c`
+- `firmware/src/trace/decode/i2c/i2c_trace_packet.h`
 - `firmware/src/config/i2c_monitor_config.h`
 
 ## Current Design Choice

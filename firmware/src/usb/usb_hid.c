@@ -8,9 +8,9 @@
 #include "app_control.h"
 #include "config/i2c_monitor_config.h"
 #include "config/spi_monitor_config.h"
-#include "trace/capture/spi_monitor_control.h"
-#include "trace/decode/i2c_decoder.h"
-#include "trace/capture/i2c_monitor_control.h"
+#include "trace/capture/spi/spi_monitor_control.h"
+#include "trace/decode/i2c/i2c_decoder.h"
+#include "trace/capture/i2c/i2c_monitor_control.h"
 
 /** @brief Payload bytes required for the I2C set-rate request. */
 #define USB_HID_I2C_MONITOR_SET_PAYLOAD_BYTES 5u

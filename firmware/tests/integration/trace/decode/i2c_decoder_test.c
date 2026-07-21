@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "trace/decode/i2c_decoder.h"
+#include "trace/decode/i2c/i2c_decoder.h"
 
 static void append_i2c_sample(uint8_t *samples, uint32_t *sample_count, bool sda, bool scl, uint32_t repeats) {
     uint8_t encoded = (uint8_t)((sda ? 0x01u : 0u) | (scl ? 0x02u : 0u));

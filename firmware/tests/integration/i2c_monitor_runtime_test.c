@@ -4,8 +4,8 @@
 
 #include "app_control.h"
 #include "i2c_monitor_test_hooks.h"
-#include "trace/capture/i2c_monitor.h"
-#include "trace/decode/i2c_decoder.h"
+#include "trace/capture/i2c/i2c_monitor.h"
+#include "trace/decode/i2c/i2c_decoder.h"
 #include "trace/trace_ring.h"
 
 uint32_t stub_time_us32;

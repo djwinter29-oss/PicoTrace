@@ -9,7 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "trace/decode/i2c_decoder.h"
+#include "trace/decode/i2c/i2c_decoder.h"
 #include "trace/trace_packet.h"
 
 /** @brief Serialized byte size of one decoded I2C payload item. */

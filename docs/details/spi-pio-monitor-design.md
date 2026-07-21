@@ -17,7 +17,7 @@ For the higher-level component view around this design, see:
 
 ## Scope
 
-This design covers the SPI capture implementation scaffold under `firmware/src/trace/capture/`.
+This design covers the SPI capture implementation scaffold under `firmware/src/trace/capture/spi/`.
 
 The current implementation now includes a concrete SPI trace packet contract for the shared ring
 and USB stream path. The design notes below describe that current contract rather than leaving it
