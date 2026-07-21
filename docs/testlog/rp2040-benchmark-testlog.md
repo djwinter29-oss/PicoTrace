@@ -6,6 +6,83 @@ Add new entries here after firmware-affecting test runs.
 
 Use [rp2040-benchmark-testlog-template.md](rp2040-benchmark-testlog-template.md) for the entry format.
 
+## 2026-07-21 - USB Bulk Unified Chunk Write Follow-Up
+
+### Scope
+
+- board: Raspberry Pi Pico (`RP2040`)
+- firmware clock: `250 MHz`
+- firmware/build: `build/firmware-pico-250m`
+- reason: validate the USB bulk consume-path simplification that removes the split between exact packet writes and partial stream writes
+
+### Commands
+
+- `cmake --build build/tests --target usb_app_test && ./build/tests/usb_app_test`
+- `./tools/linux/build.sh --board pico --firmware-build-dir build/firmware-pico-250m --system-clock-khz 250000`
+- `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico-250m --skip-build`
+- `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi --speed-hz 15500000 16000000 16500000 17000000 17500000 18000000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi-miso --speed-hz 5600000 5700000 5800000 5900000 --trials 3`
+
+### Results
+
+- hosted tests: `usb_app_test` built and ran cleanly with the unified chunk writer.
+- MOSI: `15.5/16.0/16.5/17.0/17.5/18.0 MHz` all passed `3/3` with `sink=0 sampler=0 ring=0` on every trial.
+- MOSI+MISO: `5.6/5.7/5.8 MHz` all passed `3/3`; `5.9 MHz` passed `1/3`. Failing `5.9 MHz` trials stayed downstream-limited with `sink>0 sampler=0 ring=0 peak=255`.
+- I2C smoke: the standard `4.0 MHz` `i2cdetect -y 1` trace stayed healthy with `transactions=112 starts=112 stops=112 overruns=0 sticky=0`.
+- counter notes: the unified chunk path now reports small non-zero `policy_deferrals` even on successful SPI runs because whole-packet transfers naturally flow through the same alignment policy instead of a separate exact-write fast path.
+
+### Interpretation
+
+- Removing the split between exact packet writes and stream-chunk writes improved the `250 MHz` SPI benchmark envelope on this bench without disturbing the I2C smoke path.
+- MOSI improved beyond the current published baseline by making `18.0 MHz` clean at `3/3`.
+- MOSI+MISO recovered to match the current published baseline at `5.8 MHz` clean, while `5.9 MHz` remained the unstable edge.
+- The remaining SPI failures are still downstream-limited rather than sampler-limited, but the unified write path reduced enough policy branching to improve throughput in practice.
+
+### Baseline Impact
+
+- `docs/testlog/rp2040-benchmark-baseline.md` updated: no
+- reason: the run is promising, but the workflow keeps the stable baseline unchanged unless explicitly requested.
+
+## 2026-07-21 - I2C Transition And Ready-Cursor Follow-Up
+
+### Scope
+
+- board: Raspberry Pi Pico (`RP2040`)
+- firmware clock: `250 MHz`
+- firmware/build: `build/firmware-pico-250m`
+- reason: validate the I2C monitor refactor that removes the separate transition-interest mask and replaces the ready-buffer scan with a single next-ready cursor
+
+### Commands
+
+- `cmake --build build/tests --target i2c_monitor_runtime_test && ./build/tests/i2c_monitor_runtime_test`
+- `cmake --build build/tests --target usb_app_test && ./build/tests/usb_app_test`
+- `./tools/linux/build.sh --board pico --firmware-build-dir build/firmware-pico-250m --system-clock-khz 250000`
+- `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico-250m --skip-build`
+- `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi --speed-hz 15500000 16000000 16500000 17000000 17500000 18000000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi-miso --speed-hz 5600000 5700000 5800000 5900000 --trials 3`
+
+### Results
+
+- hosted tests: `i2c_monitor_runtime_test` and `usb_app_test` built and ran cleanly after repairing the refactor onto a clean source base.
+- MOSI: `15.5/16.0/16.5/17.5 MHz` passed `3/3`; `17.0 MHz` was noisy at `2/3`; `18.0 MHz` failed `0/3`. Every failing trial stayed downstream-limited with `sink>0 sampler=0 ring=0 peak=255`.
+- MOSI+MISO: `5.6 MHz` passed `3/3`; `5.7 MHz` passed `2/3`; `5.8 MHz` passed `1/3`; `5.9 MHz` passed `0/3`. Every failing trial stayed downstream-limited with `sink>0 sampler=0 ring=0 peak=255`.
+- I2C smoke: the standard `4.0 MHz` `i2cdetect -y 1` trace stayed healthy with `transactions=112 starts=112 stops=112 overruns=0 sticky=0`.
+- I2C sample-hz notes: this follow-up reran only the conservative smoke point because the code change was structural and localized to the I2C monitor poll/completion bookkeeping.
+
+### Interpretation
+
+- The I2C transition-state collapse and ready-buffer cursor change preserved the expected hosted and hardware I2C behavior; the standard smoke test remains clean with no overrun signal.
+- SPI did not improve as a side effect of this I2C-local refactor. MOSI still tops out at the existing `17.5 MHz` clean point with `18.0 MHz` unstable, while MOSI+MISO remains below the current published `5.8 MHz` clean baseline on this bench.
+- The SPI failures remained downstream-limited rather than sampler-limited, so this change did not alter the previously observed USB/ring-side bottleneck signature.
+- The non-monotonic `17.0 MHz` MOSI result looks like bench noise rather than a new stable edge because `17.5 MHz` still passed `3/3` immediately afterward.
+
+### Baseline Impact
+
+- `docs/testlog/rp2040-benchmark-baseline.md` updated: no
+- reason: the I2C behavior is unchanged at the smoke point, and the SPI benchmark envelope does not justify a baseline change.
+
 ## 2026-07-21 - 250 MHz SPI And I2C Benchmark Rerun
 
 ### Scope

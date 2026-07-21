@@ -1693,21 +1693,18 @@ static void test_usb_bulk_poll_stream_drains_trace_packet(void) {
 
 static void test_usb_bulk_service_stream_counts_host_backpressure_stalls(void) {
     trace_packet_t packet = make_test_trace_packet(45u);
-    uint32_t total_stalls_before;
     uint32_t host_stalls_before;
     uint32_t policy_deferrals_before;
 
     reset_usb_stub();
     trace_ring_init();
 
-    total_stalls_before = usb_bulk_stall_count();
     host_stalls_before = usb_bulk_host_backpressure_stall_count();
     policy_deferrals_before = usb_bulk_policy_deferral_count();
     assert(trace_ring_push(&packet) == true);
     stub_vendor_available = 0u;
 
     assert(usb_bulk_service_stream(app_control_stream_enabled()) == false);
-    assert(usb_bulk_stall_count() == (total_stalls_before + 1u));
     assert(usb_bulk_host_backpressure_stall_count() == (host_stalls_before + 1u));
     assert(usb_bulk_policy_deferral_count() == policy_deferrals_before);
 }
@@ -2165,7 +2162,7 @@ static void test_hid_spi_monitor_get_status_returns_bus_payload(void) {
     assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
     assert(response.opcode == USB_HID_OPCODE_SPI_MONITOR_GET_STATUS);
     assert(response.status == USB_HID_STATUS_OK);
-    assert(response.payload_length == 54u);
+    assert(response.payload_length == 50u);
     assert(response.payload[0] == 1u);
     assert(response.payload[1] == 1u);
     assert(response.payload[2] == 1u);
@@ -2183,12 +2180,10 @@ static void test_hid_spi_monitor_get_status_returns_bus_payload(void) {
     assert(response.payload[34] == 0u);
     assert(response.payload[38] == 0u);
     assert(response.payload[42] == 0u);
-    assert(response.payload[46] == 0u);
-    assert(response.payload[50] == 4u);
-    assert(response.payload[38] == 0u);
-    assert(response.payload[42] == 0u);
-    assert(response.payload[46] == 0u);
-    assert(response.payload[50] == 4u);
+    assert(response.payload[46] == 4u);
+    assert(response.payload[47] == 0u);
+    assert(response.payload[48] == 0u);
+    assert(response.payload[49] == 0u);
 }
 
 static void test_hid_spi_monitor_get_all_status_returns_all_channels(void) {

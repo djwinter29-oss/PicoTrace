@@ -1,6 +1,6 @@
 /**
  * @file usb_bulk.c
- * @brief TinyUSB vendor bulk helpers for exact writes and trace-ring streaming.
+ * @brief TinyUSB vendor bulk helpers for trace-ring streaming and bounded writes.
  */
 
 #include "usb/usb_bulk.h"
@@ -61,21 +61,8 @@ static const trace_packet_t *usb_bulk_prepare_stream_packet(void) {
     return g_usb_bulk_stream_state.packet;
 }
 
-/** @brief Attempt one exact vendor bulk write and require the full payload to fit. */
-static uint32_t usb_bulk_write_exact(const uint8_t *data, uint32_t length, uint32_t available) {
-    if ((data == NULL) || (length == 0u) || !tud_ready()) {
-        return 0u;
-    }
-
-    if (available < length) {
-        return 0u;
-    }
-
-    return tud_vendor_n_write(USB_VENDOR_ITF, data, length);
-}
-
-/** @brief Attempt one stream-oriented vendor bulk write using the current alignment policy. */
-static uint32_t usb_bulk_write_stream_chunk(const uint8_t *data, uint32_t length, uint32_t available) {
+/** @brief Attempt one vendor bulk stream write using the current alignment policy. */
+static uint32_t usb_bulk_write_chunk(const uint8_t *data, uint32_t length, uint32_t available) {
     uint32_t chunk;
     uint32_t trimmed_chunk;
 
@@ -125,26 +112,7 @@ static bool usb_bulk_poll_trace_ring(void) {
             break;
         }
 
-        if ((g_usb_bulk_stream_state.packet_offset == 0u)
-            && (g_usb_bulk_stream_state.packet_bytes <= available)
-            && (g_usb_bulk_stream_state.packet_bytes <= bytes_remaining)) {
-            written = usb_bulk_write_exact(
-                (const uint8_t *)g_usb_bulk_stream_state.packet,
-                g_usb_bulk_stream_state.packet_bytes,
-                available
-            );
-            if (written == 0u) {
-                break;
-            }
-
-            wrote_any = true;
-            bytes_remaining -= written;
-            trace_ring_pop();
-            usb_bulk_reset_stream_state();
-            continue;
-        }
-
-        written = usb_bulk_write_stream_chunk(
+        written = usb_bulk_write_chunk(
             ((const uint8_t *)g_usb_bulk_stream_state.packet) + g_usb_bulk_stream_state.packet_offset,
             remaining,
             available
@@ -167,11 +135,18 @@ static bool usb_bulk_poll_trace_ring(void) {
 
 /** @copydoc usb_bulk_write */
 bool usb_bulk_write(const uint8_t *data, uint32_t length) {
+    uint32_t available;
+
     if (!tud_ready()) {
         return false;
     }
 
-    return usb_bulk_write_exact(data, length, tud_vendor_n_write_available(USB_VENDOR_ITF)) == length;
+    available = tud_vendor_n_write_available(USB_VENDOR_ITF);
+    if ((data == NULL) || (length == 0u) || (available < length)) {
+        return false;
+    }
+
+    return tud_vendor_n_write(USB_VENDOR_ITF, data, length) == length;
 }
 
 /** @copydoc usb_bulk_stream_write */
@@ -180,7 +155,7 @@ uint32_t usb_bulk_stream_write(const uint8_t *data, uint32_t length) {
         return 0u;
     }
 
-    return usb_bulk_write_stream_chunk(data, length, tud_vendor_n_write_available(USB_VENDOR_ITF));
+    return usb_bulk_write_chunk(data, length, tud_vendor_n_write_available(USB_VENDOR_ITF));
 }
 
 /** @copydoc usb_bulk_service_stream */
@@ -203,11 +178,6 @@ bool usb_bulk_service_stream(bool enabled) {
 
 /** @copydoc usb_bulk_flush */
 void usb_bulk_flush(void) { tud_vendor_n_write_flush(USB_VENDOR_ITF); }
-
-/** @copydoc usb_bulk_stall_count */
-uint32_t usb_bulk_stall_count(void) {
-    return g_usb_bulk_stream_state.host_backpressure_stall_count;
-}
 
 /** @copydoc usb_bulk_host_backpressure_stall_count */
 uint32_t usb_bulk_host_backpressure_stall_count(void) {

@@ -86,7 +86,6 @@ class TrialResult:
     sink_overrun_count: int
     sampler_overrun_count: int
     ring_drop_count: int
-    usb_stall_count: int
     usb_host_backpressure_stall_count: int
     usb_policy_deferral_count: int
     peak_ring_depth_packets: int
@@ -278,7 +277,6 @@ def collect_stream(config: BenchmarkConfig, marker: bytes, expected: bytes) -> T
             sink_overrun_count=status.sink_overrun_count,
             sampler_overrun_count=status.sampler_overrun_count,
             ring_drop_count=status.ring_drop_count,
-            usb_stall_count=status.usb_stall_count,
             usb_host_backpressure_stall_count=status.usb_host_backpressure_stall_count,
             usb_policy_deferral_count=status.usb_policy_deferral_count,
             peak_ring_depth_packets=status.peak_ring_depth_packets,
@@ -305,7 +303,6 @@ def collect_stream(config: BenchmarkConfig, marker: bytes, expected: bytes) -> T
         sink_overrun_count=status.sink_overrun_count,
         sampler_overrun_count=status.sampler_overrun_count,
         ring_drop_count=status.ring_drop_count,
-        usb_stall_count=status.usb_stall_count,
         usb_host_backpressure_stall_count=status.usb_host_backpressure_stall_count,
         usb_policy_deferral_count=status.usb_policy_deferral_count,
         peak_ring_depth_packets=status.peak_ring_depth_packets,
@@ -327,7 +324,7 @@ def format_trial(index: int, total_bytes: int, capture_mode: SpiCaptureMode, res
         f"window={result.window_seconds:.2f}s packets={result.packets_emitted} txns={result.transactions_emitted} "
         f"overruns={result.overrun_count} sink={result.sink_overrun_count} "
         f"sampler={result.sampler_overrun_count} ring={result.ring_drop_count} "
-        f"stalls={result.usb_stall_count} host_stalls={result.usb_host_backpressure_stall_count} "
+        f"host_stalls={result.usb_host_backpressure_stall_count} "
         f"policy_deferrals={result.usb_policy_deferral_count} peak={result.peak_ring_depth_packets} "
         f"timeout_closes={result.timeout_close_count}"
     )

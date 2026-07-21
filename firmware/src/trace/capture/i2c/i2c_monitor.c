@@ -49,6 +49,7 @@ typedef struct {
     uint8_t sm;
     int dma_channel;
     uint8_t active_buffer;
+    uint8_t next_ready_buffer;
     volatile uint8_t software_owned_buffer_mask;
     volatile uint8_t ready_buffer_mask;
     bool running;
@@ -105,7 +106,6 @@ static uint32_t g_i2c_monitor_program_offset;
 static bool g_i2c_monitor_initialized;
 static bool g_i2c_monitor_init_failed;
 static uint8_t g_i2c_monitor_poll_channel_mask;
-static uint8_t g_i2c_monitor_transition_channel_mask;
 
 static uint32_t i2c_monitor_timestamp_us(void) {
     return time_us_32();
@@ -151,14 +151,8 @@ static void i2c_monitor_set_transition_interest(
     const i2c_monitor_channel_state_t *channel_state,
     bool transition_needed
 ) {
-    uint8_t channel_mask = (uint8_t)(1u << i2c_monitor_channel_index(channel_state));
-
-    if (transition_needed) {
-        g_i2c_monitor_transition_channel_mask = (uint8_t)(g_i2c_monitor_transition_channel_mask | channel_mask);
-        return;
-    }
-
-    g_i2c_monitor_transition_channel_mask = (uint8_t)(g_i2c_monitor_transition_channel_mask & (uint8_t)~channel_mask);
+    (void)channel_state;
+    (void)transition_needed;
 }
 
 static void i2c_monitor_clear_pending_transition(i2c_monitor_channel_state_t *channel_state) {
@@ -199,6 +193,7 @@ static void i2c_monitor_reset_channel_capture_state(
 ) {
     channel_state->software_owned_buffer_mask = 0u;
     channel_state->ready_buffer_mask = 0u;
+    channel_state->next_ready_buffer = channel_state->active_buffer;
     i2c_trace_packet_builder_discard(&channel_state->packet_builder);
     if (next_packet_flags != 0u) {
         i2c_trace_packet_builder_mark_next_packet(&channel_state->packet_builder, next_packet_flags);
@@ -216,31 +211,26 @@ static bool i2c_monitor_take_completed_buffer(
     uint8_t *buffer_index_out
 ) {
     uint32_t irq_state;
-    uint8_t ready_mask;
+    uint8_t buffer_index;
+    uint8_t buffer_mask;
 
     irq_state = save_and_disable_interrupts();
-    ready_mask = channel_state->ready_buffer_mask;
-    if (ready_mask == 0u) {
+    if (channel_state->ready_buffer_mask == 0u) {
         restore_interrupts(irq_state);
         return false;
     }
 
-    for (uint32_t offset = 0u; offset < I2C_MONITOR_BUFFER_COUNT; ++offset) {
-        uint8_t buffer_index = (uint8_t)((channel_state->active_buffer + offset) % I2C_MONITOR_BUFFER_COUNT);
-        uint8_t buffer_mask = (uint8_t)(1u << buffer_index);
-
-        if ((ready_mask & buffer_mask) == 0u) {
-            continue;
-        }
-
-        channel_state->ready_buffer_mask = (uint8_t)(ready_mask & (uint8_t)~buffer_mask);
+    buffer_index = channel_state->next_ready_buffer;
+    buffer_mask = (uint8_t)(1u << buffer_index);
+    if ((channel_state->ready_buffer_mask & buffer_mask) == 0u) {
         restore_interrupts(irq_state);
-        *buffer_index_out = buffer_index;
-        return true;
+        return false;
     }
 
+    channel_state->ready_buffer_mask = (uint8_t)(channel_state->ready_buffer_mask & (uint8_t)~buffer_mask);
     restore_interrupts(irq_state);
-    return false;
+    *buffer_index_out = buffer_index;
+    return true;
 }
 
 static bool i2c_monitor_enqueue_completed_buffer(
@@ -251,6 +241,10 @@ static bool i2c_monitor_enqueue_completed_buffer(
 
     if ((channel_state->ready_buffer_mask & buffer_mask) != 0u) {
         return false;
+    }
+
+    if (channel_state->ready_buffer_mask == 0u) {
+        channel_state->next_ready_buffer = buffer_index;
     }
 
     channel_state->ready_buffer_mask = (uint8_t)(channel_state->ready_buffer_mask | buffer_mask);
@@ -279,9 +273,26 @@ static void i2c_monitor_release_completed_buffer(
     uint8_t buffer_index
 ) {
     uint32_t irq_state = save_and_disable_interrupts();
+    uint8_t ready_mask;
 
     channel_state->software_owned_buffer_mask =
         (uint8_t)(channel_state->software_owned_buffer_mask & (uint8_t)~(1u << buffer_index));
+    ready_mask = channel_state->ready_buffer_mask;
+    if (ready_mask == 0u) {
+        channel_state->next_ready_buffer = (uint8_t)((buffer_index + 1u) % I2C_MONITOR_BUFFER_COUNT);
+        restore_interrupts(irq_state);
+        return;
+    }
+
+    for (uint32_t offset = 1u; offset <= I2C_MONITOR_BUFFER_COUNT; ++offset) {
+        uint8_t candidate = (uint8_t)((buffer_index + offset) % I2C_MONITOR_BUFFER_COUNT);
+
+        if ((ready_mask & (uint8_t)(1u << candidate)) != 0u) {
+            channel_state->next_ready_buffer = candidate;
+            break;
+        }
+    }
+
     restore_interrupts(irq_state);
 }
 
@@ -628,7 +639,6 @@ static void i2c_monitor_dma_irq_handler(void) {
 
 void i2c_monitor_poll(void) {
     uint8_t active_mask;
-    uint8_t pending_mask;
     bool stream_enabled;
     uint32_t channel;
 
@@ -645,10 +655,16 @@ void i2c_monitor_poll(void) {
         }
     }
 
-    pending_mask = g_i2c_monitor_transition_channel_mask;
-    while (i2c_monitor_take_next_channel_from_mask(&pending_mask, &channel)) {
+    active_mask = g_i2c_monitor_poll_channel_mask;
+    while (i2c_monitor_take_next_channel_from_mask(&active_mask, &channel)) {
+        i2c_monitor_channel_state_t *channel_state = &g_i2c_monitor_channels[channel];
+
+        if (!i2c_monitor_transition_pending(channel_state)) {
+            continue;
+        }
+
         i2c_monitor_process_pending_transition(
-            &g_i2c_monitor_channels[channel],
+            channel_state,
             g_i2c_monitor_logical_channels[channel]
         );
     }
@@ -657,13 +673,13 @@ void i2c_monitor_poll(void) {
         return;
     }
 
-    active_mask = (uint8_t)(g_i2c_monitor_poll_channel_mask & (uint8_t)~g_i2c_monitor_transition_channel_mask);
+    active_mask = g_i2c_monitor_poll_channel_mask;
     while (i2c_monitor_take_next_channel_from_mask(&active_mask, &channel)) {
         i2c_monitor_channel_state_t *channel_state;
         uint32_t drained_buffers;
 
         channel_state = &g_i2c_monitor_channels[channel];
-        if (channel_state->dma_channel < 0) {
+        if (i2c_monitor_transition_pending(channel_state) || (channel_state->dma_channel < 0)) {
             continue;
         }
 
@@ -808,7 +824,6 @@ i2c_monitor_rc_t i2c_monitor_init(void) {
     }
 
     g_i2c_monitor_poll_channel_mask = 0u;
-    g_i2c_monitor_transition_channel_mask = 0u;
     g_i2c_monitor_initialized = true;
     return I2C_MONITOR_RC_OK;
 }

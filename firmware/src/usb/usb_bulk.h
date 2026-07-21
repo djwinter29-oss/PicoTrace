@@ -35,9 +35,6 @@ bool usb_bulk_service_stream(bool enabled);
 /** @brief Flush any pending vendor bulk bytes through TinyUSB. */
 void usb_bulk_flush(void);
 
-/** @brief Return the number of stalled trace-stream write attempts since boot. */
-uint32_t usb_bulk_stall_count(void);
-
 /** @brief Return the number of trace-stream stalls caused by no vendor write space since boot. */
 uint32_t usb_bulk_host_backpressure_stall_count(void);
 
