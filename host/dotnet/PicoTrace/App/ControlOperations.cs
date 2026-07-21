@@ -7,6 +7,17 @@ internal static class ControlOperations
 {
     internal readonly record struct SpiBusControlConfig(int Bus, SpiCaptureMode Capture, int SpiMode, int ChannelSelectMask, uint TimeoutUs);
 
+    private static string FormatCaptureMode(SpiCaptureMode capture)
+    {
+        return capture switch
+        {
+            SpiCaptureMode.Disabled => "DISABLED",
+            SpiCaptureMode.Mosi => "MOSI",
+            SpiCaptureMode.MosiMiso => "MOSI_MISO",
+            _ => capture.ToString(),
+        };
+    }
+
     public static int WithControl(Action<HidControlClient> operation)
     {
         using var control = HidControlClient.Open();
@@ -34,7 +45,7 @@ internal static class ControlOperations
         {
             Console.WriteLine(
                 $"  bus={busStatus.Bus} initialized={busStatus.Initialized} running={busStatus.Running} " +
-                $"capture={busStatus.Capture} spi_mode={busStatus.SpiMode} timeout_us={busStatus.TimeoutUs} overrun={busStatus.Overrun}");
+                $"capture={FormatCaptureMode(busStatus.Capture)} spi_mode={busStatus.SpiMode} timeout_us={busStatus.TimeoutUs} overrun={busStatus.Overrun}");
         }
     }
 
@@ -70,8 +81,8 @@ internal static class ControlOperations
     {
         WithControl(control =>
         {
-            control.I2cSetRate(channel, sampleHz);
             control.SetStreamEnabled(true);
+            control.I2cSetRate(channel, sampleHz);
         });
     }
 
@@ -87,8 +98,8 @@ internal static class ControlOperations
         {
             var currentStatus = control.SpiGetStatus(logicalChannel / 3);
             var applyConfig = BuildSpiApplyConfig(logicalChannel, capture, spiMode, timeoutUs, currentStatus);
-            control.SpiSetConfig(applyConfig.Bus, applyConfig.Capture, applyConfig.SpiMode, applyConfig.ChannelSelectMask, applyConfig.TimeoutUs);
             control.SetStreamEnabled(true);
+            control.SpiSetConfig(applyConfig.Bus, applyConfig.Capture, applyConfig.SpiMode, applyConfig.ChannelSelectMask, applyConfig.TimeoutUs);
         });
 
         var config = BuildSpiApplyConfig(logicalChannel, capture, spiMode, timeoutUs, null);
@@ -100,7 +111,7 @@ internal static class ControlOperations
         var (bus, channelSelectMask) = ConfigureSpiChannel(logicalChannel, capture, spiMode, timeoutUs);
         Console.WriteLine(
             $"configured spi logical channel {logicalChannel} on bus {bus} " +
-            $"capture={capture} mode={spiMode} mask=0x{channelSelectMask:X2} timeout_us={timeoutUs}");
+            $"capture={FormatCaptureMode(capture)} mode={spiMode} mask=0x{channelSelectMask:X2} timeout_us={timeoutUs}");
     }
 
     internal static SpiBusControlConfig BuildSpiApplyConfig(

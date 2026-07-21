@@ -76,4 +76,16 @@ public sealed class ControlOperationsTests
         Assert.AreEqual(0, stop.ChannelSelectMask);
         Assert.AreEqual((uint)0, stop.TimeoutUs);
     }
+
+    [TestMethod]
+    public void BuildSpiApplyConfig_StartsWithSingleChannelMaskWhenNoCurrentStatusExists()
+    {
+        var apply = ControlOperations.BuildSpiApplyConfig(4, SpiCaptureMode.MosiMiso, 3, 250, null);
+
+        Assert.AreEqual(1, apply.Bus);
+        Assert.AreEqual(SpiCaptureMode.MosiMiso, apply.Capture);
+        Assert.AreEqual(3, apply.SpiMode);
+        Assert.AreEqual(0x02, apply.ChannelSelectMask);
+        Assert.AreEqual((uint)250, apply.TimeoutUs);
+    }
 }
