@@ -13,6 +13,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "trace/decode/i2c/i2c_trace_packet.h"
+
 /**
  * @brief Emit one decoded event to the caller-provided sink when emission is still enabled.
  * @param result Caller-owned decode result updated if the sink rejects an event.
@@ -31,6 +33,24 @@ static void i2c_decoder_emit_event(
     if ((*event_sink != NULL) && !(*event_sink)(event_sink_context, event_type, event_value)) {
         *result = I2C_DECODER_RESULT_SINK_REJECTED;
         *event_sink = NULL;
+    }
+}
+
+/**
+ * @brief Emit one decoded event directly into the active packet builder.
+ * @param result Caller-owned decode result updated if the builder rejects an event.
+ * @param builder Caller-owned packet builder receiving decoded events.
+ * @param event_type Event type encoded as @ref i2c_decode_event_type_t.
+ * @param event_value Event payload value, such as a byte value or ACK bit state.
+ */
+static void i2c_decoder_emit_builder_event(
+    i2c_decoder_result_t *result,
+    i2c_trace_packet_builder_t *builder,
+    uint8_t event_type,
+    uint8_t event_value
+) {
+    if ((builder != NULL) && !i2c_trace_packet_builder_append_event(builder, event_type, event_value)) {
+        *result = I2C_DECODER_RESULT_SINK_REJECTED;
     }
 }
 
@@ -74,6 +94,39 @@ static bool i2c_decoder_consume_pending_event(
             *bit_count = 0u;
             *current_byte = 0u;
             i2c_decoder_emit_event(result, event_sink, event_sink_context, I2C_DECODE_EVENT_STOP, 0u);
+        }
+    }
+
+    *pending_event = 0u;
+    return true;
+}
+
+static bool i2c_decoder_consume_pending_builder_event(
+    i2c_decoder_result_t *result,
+    i2c_trace_packet_builder_t *builder,
+    uint8_t *pending_event,
+    bool sda,
+    bool scl,
+    bool *transaction_active,
+    uint8_t *bit_count,
+    uint8_t *current_byte
+) {
+    if (*pending_event == 0u) {
+        return false;
+    }
+
+    /* START and STOP are latched one sample later so SDA must remain stable while SCL stays high. */
+    if (scl) {
+        if ((*pending_event == I2C_DECODE_EVENT_START) && !sda) {
+            *transaction_active = true;
+            *bit_count = 0u;
+            *current_byte = 0u;
+            i2c_decoder_emit_builder_event(result, builder, I2C_DECODE_EVENT_START, 0u);
+        } else if ((*pending_event == I2C_DECODE_EVENT_STOP) && sda) {
+            *transaction_active = false;
+            *bit_count = 0u;
+            *current_byte = 0u;
+            i2c_decoder_emit_builder_event(result, builder, I2C_DECODE_EVENT_STOP, 0u);
         }
     }
 
@@ -166,6 +219,109 @@ i2c_decoder_result_t i2c_decoder_process_buffer(
                     }
                 } else {
                     i2c_decoder_emit_event(&result, &event_sink, event_sink_context, I2C_DECODE_EVENT_ACK, sda ? 1u : 0u);
+                    bit_count = 0u;
+                    current_byte = 0u;
+                }
+            }
+
+            previous_sda = sda;
+            previous_scl = scl;
+        }
+    }
+
+    state->have_previous_levels = have_previous_levels;
+    state->previous_sda = previous_sda;
+    state->previous_scl = previous_scl;
+    state->transaction_active = transaction_active;
+    state->pending_event = pending_event;
+    state->bit_count = bit_count;
+    state->current_byte = current_byte;
+    return result;
+}
+
+i2c_decoder_result_t i2c_decoder_process_buffer_into_builder(
+    i2c_decoder_state_t *state,
+    const uint32_t *raw_words,
+    uint32_t raw_word_count,
+    i2c_trace_packet_builder_t *builder
+) {
+    i2c_decoder_result_t result = I2C_DECODER_RESULT_OK;
+    bool have_previous_levels;
+    bool previous_sda;
+    bool previous_scl;
+    bool transaction_active;
+    uint8_t pending_event;
+    uint8_t bit_count;
+    uint8_t current_byte;
+
+    if ((state == NULL) || (raw_words == NULL) || (raw_word_count == 0u) || (builder == NULL)) {
+        return I2C_DECODER_RESULT_INVALID_INPUT;
+    }
+
+    have_previous_levels = state->have_previous_levels;
+    previous_sda = state->previous_sda;
+    previous_scl = state->previous_scl;
+    transaction_active = state->transaction_active;
+    pending_event = state->pending_event;
+    bit_count = state->bit_count;
+    current_byte = state->current_byte;
+
+    for (uint32_t word_index = 0u; word_index < raw_word_count; ++word_index) {
+        uint32_t packed_samples = raw_words[word_index];
+
+        /* Skip all-idle words when the decoder is between transactions and already synchronized. */
+        if (!have_previous_levels) {
+            if (packed_samples == UINT32_MAX) {
+                have_previous_levels = true;
+                previous_sda = true;
+                previous_scl = true;
+                continue;
+            }
+        } else if (!transaction_active && (pending_event == 0u) && previous_sda && previous_scl
+                   && (packed_samples == UINT32_MAX)) {
+            continue;
+        }
+
+        for (uint32_t sample_in_word = 0u; sample_in_word < 16u; ++sample_in_word) {
+            uint8_t sample = (uint8_t)((packed_samples >> 30u) & 0x03u);
+            bool sda = (sample & 0x01u) != 0u;
+            bool scl = (sample & 0x02u) != 0u;
+
+            packed_samples <<= 2u;
+
+            if (!have_previous_levels) {
+                have_previous_levels = true;
+                previous_sda = sda;
+                previous_scl = scl;
+                continue;
+            }
+
+            if (!i2c_decoder_consume_pending_builder_event(
+                    &result,
+                    builder,
+                    &pending_event,
+                    sda,
+                    scl,
+                    &transaction_active,
+                    &bit_count,
+                    &current_byte
+                )) {
+                if (previous_scl && scl && previous_sda && !sda) {
+                    pending_event = I2C_DECODE_EVENT_START;
+                } else if (previous_scl && scl && !previous_sda && sda) {
+                    pending_event = I2C_DECODE_EVENT_STOP;
+                }
+            }
+
+            if (!previous_scl && scl && transaction_active) {
+                if (bit_count < 8u) {
+                    current_byte = (uint8_t)((current_byte << 1u) | (sda ? 1u : 0u));
+                    bit_count += 1u;
+                    if (bit_count == 8u) {
+                        i2c_decoder_emit_builder_event(&result, builder, I2C_DECODE_EVENT_DATA, current_byte);
+                    }
+                } else {
+                    i2c_decoder_emit_builder_event(&result, builder, I2C_DECODE_EVENT_ACK, sda ? 1u : 0u);
                     bit_count = 0u;
                     current_byte = 0u;
                 }

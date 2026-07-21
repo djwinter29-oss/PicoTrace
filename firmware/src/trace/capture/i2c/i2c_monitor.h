@@ -31,7 +31,7 @@ typedef struct {
 	bool transition_pending; /**< Indicates whether the producer core still needs to complete a latched transition. */
 	uint8_t transition_reason; /**< Pending boundary event type when @ref transition_pending is set, otherwise `0`. */
 	uint32_t sample_hz; /**< Active oversampling rate for the channel, or `0` when stopped. */
-	uint32_t completed_buffers; /**< Number of ping-pong buffers completed since the current start. */
+	uint32_t completed_buffers; /**< Number of raw DMA buffers completed since the current start. */
 	uint32_t overrun_count; /**< Number of times decoded output could not be queued since the current start. */
 } i2c_monitor_channel_status_t;
 
