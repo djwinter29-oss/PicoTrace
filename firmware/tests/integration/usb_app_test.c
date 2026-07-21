@@ -814,7 +814,7 @@ static void test_spi_monitor_poll_flushes_short_dma_progress(void) {
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
     raw_words[0] = pack_spi_byte_word(0x9Au, 0x00u);
-    assert(spi_monitor_test_stage_dma_progress(0u, raw_words, 1u) == true);
+    assert(spi_monitor_test_stage_channel_dma_progress(0u, raw_words, 1u) == true);
 
     stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, false);
     stub_time_us32 = 100u;

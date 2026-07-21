@@ -90,6 +90,42 @@ Observed transmit throughput across the verified MOSI pass points at `250 MHz` w
 Observed transmit throughput across the verified MOSI+MISO pass points at `250 MHz` was about
 `3.2-3.6 Mb/s` over the full transfer window.
 
+## Recent Investigation Notes
+
+These notes capture newer measurements taken while investigating the SPI test-hook cleanup on
+`2026-07-21`.
+
+They are recorded here because the measured envelope changed, but they do not replace the
+best-known `250 MHz` baseline above until the regression cause is fixed or the new result is shown
+to be stable and intentional.
+
+### RP2040 SPI Regression Probe On 2026-07-21
+
+Focused commands used during the investigation:
+
+- `./tools/linux/load.sh --board pico`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi --speed-hz 17000000 17500000 18000000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi-miso --speed-hz 5800000 5900000 --trials 3`
+
+Observed results on the investigation build:
+
+- MOSI `17.0 MHz`: `0/3` on the first run after the SPI test-hook refactor, with mixed failure signatures including small sampler overruns and downstream ring-full loss
+- MOSI `17.5 MHz`: `0/3`
+- MOSI `18.0 MHz`: `0/3`, still dominated by sampler overruns
+- MOSI+MISO `5.8 MHz`: `3/3`
+- MOSI+MISO `5.9 MHz`: `1/3`, still in the same unstable edge region as the established baseline
+
+Additional probe results during the same investigation:
+
+- moving the new SPI test-only wrappers out of the production firmware image improved MOSI `17.0 MHz` from `0/3` to `1/3`
+- restoring one removed dead helper for a code-layout probe pushed MOSI `17.0 MHz` back to `0/3`
+
+Current interpretation:
+
+- the recent regression is most likely layout-sensitive on RP2040 XIP flash rather than a direct logic bug in the active SPI DMA poll path
+- the first known-good reference for comparison remains the baseline above: MOSI lossless through `17.0 MHz` and MOSI+MISO lossless through `5.8 MHz`
+- until a follow-up benchmark re-establishes the lossless `17.0 MHz` MOSI point on the cleaned source tree, treat the current refactor branch as performance-regressed
+
 ## Current I2C Trace Baseline
 
 These are the current reference expectations for the Raspberry Pi Pico (`RP2040`) I2C trace smoke

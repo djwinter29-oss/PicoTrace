@@ -676,41 +676,6 @@ static void spi_monitor_internal_process_channel_words(
     channel_runtime->last_activity_timestamp_us = timestamp_us;
 }
 
-/** @brief Decode one raw SPI sample buffer for one observed bus and attribute it to the active slot. */
-void spi_monitor_internal_process_bus_words(
-    uint32_t bus,
-    uint8_t active_cs_mask,
-    uint32_t timestamp_us,
-    const uint32_t *raw_words,
-    uint32_t raw_word_count
-) {
-    uint8_t eligible_mask;
-    uint32_t first_channel;
-    uint32_t end_channel;
-
-    if ((raw_words == NULL) || (raw_word_count == 0u) || !g_spi_monitor_buses[bus].running) {
-        return;
-    }
-
-    eligible_mask = (uint8_t)(active_cs_mask & g_spi_monitor_buses[bus].channel_select_mask);
-    if (eligible_mask == 0u) {
-        spi_monitor_close_bus_transactions(bus, 0u);
-        return;
-    }
-
-    spi_monitor_bus_channel_range(bus, &first_channel, &end_channel);
-    for (uint32_t channel = first_channel; channel < end_channel; ++channel) {
-        uint8_t slot_mask = (uint8_t)(1u << spi_monitor_channel_to_slot(channel));
-
-        if ((eligible_mask & slot_mask) != 0u) {
-            spi_monitor_internal_process_channel_words(channel, timestamp_us, raw_words, raw_word_count);
-            continue;
-        }
-
-        spi_monitor_close_channel_transaction(channel, 0u);
-    }
-}
-
 /** @brief Close timed-out SPI transactions whose chip-select did not explicitly end in time. */
 void spi_monitor_internal_poll_bus_timeout(uint32_t bus, uint32_t now_us) {
     uint32_t timeout_us = g_spi_monitor_buses[bus].timeout_us;
@@ -842,6 +807,29 @@ bool spi_monitor_internal_test_stage_channel_dma_progress(uint32_t channel, cons
     return true;
 }
 
+#ifdef PICOTRACE_SPI_MONITOR_TEST
+void spi_monitor_internal_test_process_channel_words(
+    uint32_t channel,
+    uint32_t timestamp_us,
+    const uint32_t *raw_words,
+    uint32_t raw_word_count
+) {
+    if (channel >= SPI_MONITOR_CHANNEL_COUNT) {
+        return;
+    }
+
+    spi_monitor_internal_process_channel_words(channel, timestamp_us, raw_words, raw_word_count);
+}
+
+void spi_monitor_internal_test_close_channel_transaction(uint32_t channel, uint8_t closing_flags) {
+    if (channel >= SPI_MONITOR_CHANNEL_COUNT) {
+        return;
+    }
+
+    spi_monitor_close_channel_transaction(channel, closing_flags);
+}
+#endif
+
 bool spi_monitor_internal_test_stage_channel_dma_progress_with_boundary(
     uint32_t channel,
     const uint32_t *raw_words,
@@ -858,33 +846,6 @@ bool spi_monitor_internal_test_stage_channel_dma_progress_with_boundary(
 
     spi_monitor_enqueue_channel_boundary(channel, boundary_word_offset);
     return true;
-}
-
-bool spi_monitor_internal_test_stage_dma_progress(uint32_t bus, const uint32_t *raw_words, uint32_t raw_word_count) {
-    spi_monitor_channel_sampler_state_t *sampler_state = NULL;
-    uint32_t sampler = 0u;
-    uint32_t selected_sampler = 0u;
-    uint32_t first_channel;
-    uint32_t end_channel;
-
-    if (!spi_monitor_internal_valid_bus(bus) || (raw_words == NULL) || (raw_word_count == 0u) || (raw_word_count > SPI_MONITOR_DMA_RING_WORDS)) {
-        return false;
-    }
-
-    spi_monitor_bus_channel_range(bus, &first_channel, &end_channel);
-    for (sampler = first_channel; sampler < end_channel; ++sampler) {
-        if (g_spi_monitor_channel_samplers[sampler].running && (g_spi_monitor_channel_samplers[sampler].dma_channel >= 0)) {
-            sampler_state = &g_spi_monitor_channel_samplers[sampler];
-            selected_sampler = sampler;
-            break;
-        }
-    }
-
-    if (sampler_state == NULL) {
-        return false;
-    }
-
-    return spi_monitor_internal_test_stage_channel_dma_progress(selected_sampler, raw_words, raw_word_count);
 }
 
 /** @brief Stop one logical SPI channel sampler and leave its DMA ring idle. */

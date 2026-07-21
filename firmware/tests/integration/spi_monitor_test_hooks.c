@@ -10,23 +10,52 @@
 bool spi_monitor_internal_valid_bus(uint32_t bus);
 bool spi_monitor_internal_stream_enabled(void);
 void spi_monitor_internal_abort_bus_transaction(uint32_t bus);
-void spi_monitor_internal_process_bus_words(
-    uint32_t bus,
-    uint8_t active_cs_mask,
+void spi_monitor_internal_poll_bus_timeout(uint32_t bus, uint32_t now_us);
+void spi_monitor_internal_set_bus_sampler_overrun_count(uint32_t bus, uint32_t overrun_count);
+bool spi_monitor_internal_test_stage_channel_dma_progress(uint32_t channel, const uint32_t *raw_words, uint32_t raw_word_count);
+void spi_monitor_internal_test_process_channel_words(
+    uint32_t channel,
     uint32_t timestamp_us,
     const uint32_t *raw_words,
     uint32_t raw_word_count
 );
-void spi_monitor_internal_poll_bus_timeout(uint32_t bus, uint32_t now_us);
-void spi_monitor_internal_set_bus_sampler_overrun_count(uint32_t bus, uint32_t overrun_count);
-bool spi_monitor_internal_test_stage_dma_progress(uint32_t bus, const uint32_t *raw_words, uint32_t raw_word_count);
-bool spi_monitor_internal_test_stage_channel_dma_progress(uint32_t channel, const uint32_t *raw_words, uint32_t raw_word_count);
+void spi_monitor_internal_test_close_channel_transaction(uint32_t channel, uint8_t closing_flags);
 bool spi_monitor_internal_test_stage_channel_dma_progress_with_boundary(
     uint32_t channel,
     const uint32_t *raw_words,
     uint32_t raw_word_count,
     uint32_t boundary_word_offset
 );
+
+static void spi_monitor_test_bus_channel_range(uint32_t bus, uint32_t *first_channel, uint32_t *end_channel) {
+    uint32_t first = bus * SPI_MONITOR_CS_SLOTS_PER_BUS;
+
+    *first_channel = first;
+    *end_channel = first + SPI_MONITOR_CS_SLOTS_PER_BUS;
+}
+
+static void spi_monitor_test_feed_channel_mask(
+    uint32_t bus,
+    uint8_t active_cs_mask,
+    uint32_t timestamp_us,
+    const uint32_t *raw_words,
+    uint32_t raw_word_count
+) {
+    uint32_t first_channel;
+    uint32_t end_channel;
+
+    spi_monitor_test_bus_channel_range(bus, &first_channel, &end_channel);
+    for (uint32_t channel = first_channel; channel < end_channel; ++channel) {
+        uint8_t slot_mask = (uint8_t)(1u << (channel - first_channel));
+
+        if ((active_cs_mask & slot_mask) != 0u) {
+            spi_monitor_internal_test_process_channel_words(channel, timestamp_us, raw_words, raw_word_count);
+            continue;
+        }
+
+        spi_monitor_internal_test_close_channel_transaction(channel, 0u);
+    }
+}
 
 bool spi_monitor_test_feed_samples(
     uint32_t bus,
@@ -44,7 +73,7 @@ bool spi_monitor_test_feed_samples(
         return true;
     }
 
-    spi_monitor_internal_process_bus_words(bus, active_cs_mask, timestamp_us, raw_words, raw_word_count);
+    spi_monitor_test_feed_channel_mask(bus, active_cs_mask, timestamp_us, raw_words, raw_word_count);
     return true;
 }
 
@@ -84,7 +113,7 @@ bool spi_monitor_test_feed_mosi_miso_samples(
         }
     }
 
-    spi_monitor_internal_process_bus_words(bus, active_cs_mask, timestamp_us, merged_words, raw_word_count);
+    spi_monitor_test_feed_channel_mask(bus, active_cs_mask, timestamp_us, merged_words, raw_word_count);
     return true;
 }
 
@@ -107,10 +136,6 @@ void spi_monitor_test_set_bus_sampler_overrun_counts(uint32_t bus, uint32_t mosi
     }
 
     spi_monitor_internal_set_bus_sampler_overrun_count(bus, mosi_overruns + miso_overruns);
-}
-
-bool spi_monitor_test_stage_dma_progress(uint32_t bus, const uint32_t *raw_words, uint32_t raw_word_count) {
-    return spi_monitor_internal_test_stage_dma_progress(bus, raw_words, raw_word_count);
 }
 
 bool spi_monitor_test_stage_channel_dma_progress(uint32_t channel, const uint32_t *raw_words, uint32_t raw_word_count) {
