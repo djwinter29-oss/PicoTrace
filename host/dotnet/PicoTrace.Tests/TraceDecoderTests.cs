@@ -108,10 +108,11 @@ public sealed class TraceDecoderTests
     public void TraceStreamDecoder_SkipsInvalidPayloadLengthHeader()
     {
         var decoder = new TraceStreamDecoder();
+        var invalidPayloadLength = (ushort)(TraceDecoder.TracePacketPayloadBytes + 1);
         var invalidHeader = new byte[]
         {
             1, 1, 0, 0,
-            113, 0,
+            (byte)(invalidPayloadLength & 0xFF), (byte)(invalidPayloadLength >> 8),
             0, 0,
             1, 0, 0, 0,
             0, 0, 0, 0,
