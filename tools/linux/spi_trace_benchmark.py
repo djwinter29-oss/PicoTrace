@@ -113,6 +113,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="one or more SPI clock rates in Hz to test",
     )
     parser.add_argument("--device", default="/dev/spidev0.0", help="Linux SPI device path")
+    parser.add_argument(
+        "--firmware-build-dir",
+        default=None,
+        help="firmware build directory to inspect for the configured system clock",
+    )
     parser.add_argument("--spi-mode", type=int, choices=range(4), default=0, help="SPI mode 0-3")
     parser.add_argument("--bits-per-word", type=int, default=8, help="SPI bits per word")
     parser.add_argument("--delay-usecs", type=int, default=0, help="SPI inter-transfer delay in microseconds")
@@ -328,7 +333,15 @@ def format_trial(index: int, total_bytes: int, capture_mode: SpiCaptureMode, res
     )
 
 
-def current_clock_khz(board: str) -> int | None:
+def current_clock_khz(board: str, firmware_build_dir: str | None) -> int | None:
+    if firmware_build_dir is not None:
+        cache_path = REPO_ROOT / firmware_build_dir / "CMakeCache.txt"
+        if cache_path.is_file():
+            text = cache_path.read_text(encoding="utf-8")
+            match = re.search(r"^PICOTRACE_SYSTEM_CLOCK_KHZ:STRING=(\d+)\s*$", text, re.MULTILINE)
+            if match is not None:
+                return int(match.group(1))
+
     system_h = REPO_ROOT / "firmware" / "src" / "driver" / "system.h"
     text = system_h.read_text(encoding="utf-8")
     match = re.search(
@@ -357,7 +370,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     expected = data_chunk * args.repeat_count
     total_bytes = args.chunk_bytes * args.repeat_count
 
-    clock_khz = current_clock_khz(args.board)
+    clock_khz = current_clock_khz(args.board, args.firmware_build_dir)
     prefix = f"firmware_clock={clock_khz}kHz " if clock_khz is not None else ""
     print(
         f"{prefix}capture={args.capture} chunk_bytes={args.chunk_bytes} "

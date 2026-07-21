@@ -29,21 +29,24 @@ Run the PicoTrace firmware and host benchmark workflow for measured SPI throughp
 ## Procedure
 1. Check the current RP2040 baseline notes in `docs/testlog/rp2040-benchmark-baseline.md`, the live run log in `docs/testlog/rp2040-benchmark-testlog.md`, and the entry format in `docs/testlog/rp2040-benchmark-testlog-template.md` before changing the measured baseline.
 2. Rebuild focused firmware tests when the SPI trace path changed.
-3. Rebuild and flash the target firmware before benchmarking.
-4. Run the SPI benchmark script with the correct board, capture mode, and sweep speeds.
-5. Compare pass rate, mismatch position, sampler overruns, sink overruns, ring drops, stalls, and peak ring depth.
-6. Record the run in `docs/testlog/rp2040-benchmark-testlog.md` using `docs/testlog/rp2040-benchmark-testlog-template.md`, including commands, measured results, and interpretation.
-7. Compare the result against `docs/testlog/rp2040-benchmark-baseline.md` and report whether the measured SPI benchmark envelope changed compared with the previous baseline, including any regression or improvement in pass point, throughput, or overrun behavior.
-8. If the benchmark envelope changed, update `docs/testlog/rp2040-benchmark-baseline.md` and preserve older baselines as historical reference.
+3. When comparing RP2040 clock points, build one firmware directory per clock using `./tools/linux/build.sh --board pico --firmware-build-dir ... --system-clock-khz ...`.
+4. Rebuild and flash the target firmware before benchmarking.
+5. Run the SPI benchmark script with the correct board, capture mode, sweep speeds, and matching `--firmware-build-dir` so the reported firmware clock matches the flashed image.
+6. Compare pass rate, mismatch position, sampler overruns, sink overruns, ring drops, stalls, and peak ring depth.
+7. Record the run in `docs/testlog/rp2040-benchmark-testlog.md` using `docs/testlog/rp2040-benchmark-testlog-template.md`, including commands, measured results, and interpretation.
+8. Compare the result against `docs/testlog/rp2040-benchmark-baseline.md` and report whether the measured SPI benchmark envelope changed compared with the previous baseline, including any regression or improvement in pass point, throughput, or overrun behavior.
+9. If the benchmark envelope changed, update `docs/testlog/rp2040-benchmark-baseline.md` and preserve older baselines as historical reference.
 
 ## Core Commands
 - Focused firmware tests: `cmake --build build/tests --target usb_app_test && ./build/tests/usb_app_test`
 - Build Pico firmware: `cmake --build build/firmware-pico --target picotrace`
 - Flash Pico firmware: `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico --skip-build`
+- Build clock-specific Pico firmware: `./tools/linux/build.sh --board pico --firmware-build-dir build/firmware-pico-225m --system-clock-khz 225000`
+- Flash clock-specific Pico firmware: `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico-225m --skip-build`
 - Build Pico 2 firmware: `cmake --build build/firmware-pico2 --target picotrace`
 - Flash Pico 2 firmware: `./tools/linux/load.sh --board pico2 --firmware-build-dir build/firmware-pico2 --skip-build`
-- MOSI sweep: `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi --speed-hz 11500000 12000000 12250000 12500000 --trials 3`
-- MOSI+MISO sweep: `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi-miso --speed-hz 4500000 5000000 --trials 3`
+- MOSI sweep: `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-225m --capture mosi --speed-hz 11500000 12000000 12250000 12500000 --trials 3`
+- MOSI+MISO sweep: `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-225m --capture mosi-miso --speed-hz 4500000 5000000 --trials 3`
 
 ## Interpretation
 - `sampler > 0` means the sampler or DMA service path is falling behind.
