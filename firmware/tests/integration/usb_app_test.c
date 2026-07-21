@@ -823,6 +823,7 @@ static void test_spi_monitor_poll_flushes_short_dma_progress(void) {
     assert(trace_ring_available() == 0u);
 
     stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, true);
+    stub_gpio_fire_irq(SPI_MONITOR_SPI0_CS0_GPIO, GPIO_IRQ_EDGE_RISE);
     stub_time_us32 = 1200u;
     spi_monitor_poll();
 
@@ -862,6 +863,8 @@ static void test_spi_monitor_poll_flushes_independent_same_bus_channel_dma_progr
 
     stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, true);
     stub_gpio_set_level(SPI_MONITOR_SPI0_CS1_GPIO, true);
+    stub_gpio_fire_irq(SPI_MONITOR_SPI0_CS0_GPIO, GPIO_IRQ_EDGE_RISE);
+    stub_gpio_fire_irq(SPI_MONITOR_SPI0_CS1_GPIO, GPIO_IRQ_EDGE_RISE);
     stub_time_us32 = 2000u;
     spi_monitor_poll();
 

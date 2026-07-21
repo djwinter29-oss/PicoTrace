@@ -3,6 +3,8 @@
 #include <stddef.h>
 
 #include "config/spi_monitor_config.h"
+#include "hardware/gpio.h"
+#include "pico/time.h"
 
 #define SPI_MONITOR_SAMPLES_PER_WORD 8u
 #define SPI_MONITOR_BITS_PER_SAMPLE 2u
@@ -13,25 +15,32 @@ void spi_monitor_internal_abort_bus_transaction(uint32_t bus);
 void spi_monitor_internal_poll_bus_timeout(uint32_t bus, uint32_t now_us);
 void spi_monitor_internal_set_bus_sampler_overrun_count(uint32_t bus, uint32_t overrun_count);
 bool spi_monitor_internal_test_stage_channel_dma_progress(uint32_t channel, const uint32_t *raw_words, uint32_t raw_word_count);
-void spi_monitor_internal_test_process_channel_words(
-    uint32_t channel,
-    uint32_t timestamp_us,
-    const uint32_t *raw_words,
-    uint32_t raw_word_count
-);
-void spi_monitor_internal_test_close_channel_transaction(uint32_t channel, uint8_t closing_flags);
 bool spi_monitor_internal_test_stage_channel_dma_progress_with_boundary(
     uint32_t channel,
     const uint32_t *raw_words,
     uint32_t raw_word_count,
     uint32_t boundary_word_offset
 );
+void spi_monitor_poll(void);
 
 static void spi_monitor_test_bus_channel_range(uint32_t bus, uint32_t *first_channel, uint32_t *end_channel) {
     uint32_t first = bus * SPI_MONITOR_CS_SLOTS_PER_BUS;
 
     *first_channel = first;
     *end_channel = first + SPI_MONITOR_CS_SLOTS_PER_BUS;
+}
+
+static uint32_t spi_monitor_test_channel_cs_gpio(uint32_t channel) {
+    switch (channel) {
+        case 0u:
+            return SPI_MONITOR_SPI0_CS0_GPIO;
+        case 1u:
+            return SPI_MONITOR_SPI0_CS1_GPIO;
+        case 2u:
+            return SPI_MONITOR_SPI1_CS0_GPIO;
+        default:
+            return SPI_MONITOR_SPI1_CS1_GPIO;
+    }
 }
 
 static void spi_monitor_test_feed_channel_mask(
@@ -47,14 +56,19 @@ static void spi_monitor_test_feed_channel_mask(
     spi_monitor_test_bus_channel_range(bus, &first_channel, &end_channel);
     for (uint32_t channel = first_channel; channel < end_channel; ++channel) {
         uint8_t slot_mask = (uint8_t)(1u << (channel - first_channel));
+        uint32_t cs_gpio = spi_monitor_test_channel_cs_gpio(channel);
 
         if ((active_cs_mask & slot_mask) != 0u) {
-            spi_monitor_internal_test_process_channel_words(channel, timestamp_us, raw_words, raw_word_count);
+            stub_gpio_set_level(cs_gpio, false);
+            (void)spi_monitor_internal_test_stage_channel_dma_progress(channel, raw_words, raw_word_count);
             continue;
         }
 
-        spi_monitor_internal_test_close_channel_transaction(channel, 0u);
+        stub_gpio_set_level(cs_gpio, true);
     }
+
+    stub_time_us32 = timestamp_us;
+    spi_monitor_poll();
 }
 
 bool spi_monitor_test_feed_samples(

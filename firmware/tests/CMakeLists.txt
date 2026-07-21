@@ -49,7 +49,7 @@ target_include_directories(usb_app_test
         ../src/config
 )
 
-    target_compile_definitions(usb_app_test PRIVATE PICOTRACE_FIRMWARE_VERSION="${PICOTRACE_FIRMWARE_VERSION}" PICOTRACE_SPI_MONITOR_TEST)
+    target_compile_definitions(usb_app_test PRIVATE PICOTRACE_FIRMWARE_VERSION="${PICOTRACE_FIRMWARE_VERSION}")
 
 target_include_directories(i2c_monitor_runtime_test
     PRIVATE
