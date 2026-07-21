@@ -14,6 +14,7 @@ Run the PicoTrace firmware and host benchmark workflow for measured SPI throughp
 - Rebuild and flash firmware before a benchmark run
 - Compare MOSI versus MOSI+MISO throughput
 - Validate benchmark regressions after SPI sampler or packetization changes
+- Run as required validation after firmware changes that may affect trace-path performance
 - Reproduce the documented RP2040 benchmark sweeps
 - Update benchmark documentation with fresh measured results
 
@@ -30,7 +31,8 @@ Run the PicoTrace firmware and host benchmark workflow for measured SPI throughp
 3. Rebuild and flash the target firmware before benchmarking.
 4. Run the SPI benchmark script with the correct board, capture mode, and sweep speeds.
 5. Compare pass rate, mismatch position, sampler overruns, sink overruns, ring drops, stalls, and peak ring depth.
-6. If the benchmark envelope changed, update `docs/rp2040-benchmark.md` and preserve older baselines as historical reference.
+6. Use `docs/rp2040-benchmark.md` as the comparison report page and report whether the measured SPI benchmark envelope changed compared with the previous baseline, including any regression or improvement in pass point, throughput, or overrun behavior.
+7. If the benchmark envelope changed, update `docs/rp2040-benchmark.md` and preserve older baselines as historical reference.
 
 ## Core Commands
 - Focused firmware tests: `cmake --build build/tests --target usb_app_test && ./build/tests/usb_app_test`

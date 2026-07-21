@@ -112,6 +112,9 @@ Lazy code without its check is unfinished. For non-trivial logic, leave one runn
 
 - Keep changes narrowly scoped to the requested behavior
 - When a task adds or changes repeatable workflow knowledge, update the matching `.github/copilot-instructions.md` guidance and any affected `.github/skills/` content in the same change set
+- When firmware changes can affect capture, packetization, buffering, USB service, timing, or other trace-path behavior, run both the SPI benchmarking skill and the I2C trace testing skill before closing the task
+- After firmware changes, explicitly report whether SPI benchmark results or I2C trace-test results changed, and call out any measured performance regression or improvement
+- Use `docs/rp2040-benchmark.md` as the canonical RP2040 report page for keeping the current best-known benchmark and I2C trace-validation baselines used for later comparison
 - Do not add unrelated tooling or interfaces
 - Prefer PicoTrace naming on the user-facing USB surface unless the task says otherwise
 - Keep host naming aligned with the current public surfaces: Python package `picotrace`, CLI `picotrace`, and .NET project `PicoTrace`

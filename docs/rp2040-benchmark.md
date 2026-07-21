@@ -1,7 +1,16 @@
 # RP2040 Benchmark Notes
 
 This document captures the current sustained-throughput benchmark shape for the Raspberry Pi Pico
-(`RP2040`) firmware and the most recent measured results on the current `250 MHz` baseline.
+(`RP2040`) firmware, the most recent measured SPI results on the current `250 MHz` baseline, and
+the current RP2040 I2C trace-validation baseline used for later comparison.
+
+## Report Page Use
+
+Use this page as the canonical RP2040 comparison report whenever firmware changes may affect SPI or
+I2C trace behavior.
+
+Keep the current best-known RP2040 results here so later firmware work can compare against one
+stable reference page.
 
 ## What This Benchmark Measures
 
@@ -80,6 +89,26 @@ Observed transmit throughput across the verified MOSI pass points at `250 MHz` w
 
 Observed transmit throughput across the verified MOSI+MISO pass points at `250 MHz` was about
 `3.2-3.6 Mb/s` over the full transfer window.
+
+## Current I2C Trace Baseline
+
+These are the current reference expectations for the Raspberry Pi Pico (`RP2040`) I2C trace smoke
+test on the bench wiring described in `docs/raspberry-pi-test-setup.md`.
+
+- traffic source: `i2cdetect -y 1`
+- PicoTrace logical channel: `0`
+- current repo-local test helper: `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
+- expected transactions: `112`
+- expected start events: `112`
+- expected stop events: `112`
+- expected monitor overruns: `0`
+- expected sticky error state: `0`
+
+Current interpretation:
+
+- `112` traced transactions means the RP2040 bench captured the expected Linux address-probe workload.
+- balanced `start` and `stop` counts mean the captured I2C event stream stayed complete for the scan.
+- `overruns=0` and `sticky=0` mean the I2C monitor stayed healthy during the smoke test.
 
 ## Historical 225 MHz Reference
 
@@ -229,3 +258,5 @@ The script prints one summary line per requested speed and includes:
 - The benchmark script accepts `--board pico|pico2` so the reported firmware clock matches the
   target family under test.
 - Because the edge is narrow, compare multiple trials instead of trusting a single pass or fail.
+- The I2C trace helper uses the board-local CDC `i2cmon` command plus passive USB bulk decode and
+  is useful as a fast smoke test after firmware changes.
