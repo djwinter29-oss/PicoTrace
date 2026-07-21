@@ -491,8 +491,26 @@ static uint8_t spi_monitor_extract_miso_byte(uint32_t packed_samples) {
     );
 }
 
-/** @brief Return the immutable sampler program template for one SPI mode. */
-static const pio_program_t *spi_monitor_sampler_program_template(uint8_t spi_mode) {
+/** @brief Extract one MOSI byte from a MOSI-only raw sampler word. */
+static uint8_t spi_monitor_extract_mosi_only_byte(uint32_t raw_samples) {
+    return (uint8_t)raw_samples;
+}
+
+/** @brief Return the immutable sampler program template for one SPI mode and capture direction. */
+static const pio_program_t *spi_monitor_sampler_program_template(spi_monitor_capture_t capture, uint8_t spi_mode) {
+    if (capture == SPI_MONITOR_CAPTURE_MOSI) {
+        switch (spi_mode) {
+            case 0u:
+                return &spi_monitor_mode0_mosi_sampler_program;
+            case 1u:
+                return &spi_monitor_mode1_mosi_sampler_program;
+            case 2u:
+                return &spi_monitor_mode2_mosi_sampler_program;
+            default:
+                return &spi_monitor_mode3_mosi_sampler_program;
+        }
+    }
+
     switch (spi_mode) {
         case 0u:
             return &spi_monitor_mode0_sampler_program;
@@ -652,7 +670,7 @@ static void spi_monitor_internal_process_channel_words(
                 capture,
                 logical_channel,
                 transaction_timestamp_us,
-                spi_monitor_extract_mosi_byte(raw_words[word_index]),
+                spi_monitor_extract_mosi_only_byte(raw_words[word_index]),
                 0u
             );
         }
@@ -825,11 +843,11 @@ static void spi_monitor_stop_channel_sampler(uint32_t sampler) {
 }
 
 /** @brief Start one logical SPI channel sampler with a continuous DMA ping-pong ring. */
-static bool spi_monitor_start_channel_sampler(uint32_t sampler, uint8_t spi_mode) {
+static bool spi_monitor_start_channel_sampler(uint32_t sampler, spi_monitor_capture_t capture, uint8_t spi_mode) {
     spi_monitor_channel_sampler_state_t *sampler_state = &g_spi_monitor_channel_samplers[sampler];
     dma_channel_config dma_config;
     uint16_t *instructions = g_spi_monitor_program_instructions[sampler];
-    const pio_program_t *template_program = spi_monitor_sampler_program_template(spi_mode);
+    const pio_program_t *template_program = spi_monitor_sampler_program_template(capture, spi_mode);
 
     memset(g_spi_monitor_channel_sampler_dma_buffers[sampler], 0, sizeof(g_spi_monitor_channel_sampler_dma_buffers[sampler]));
 
@@ -849,19 +867,36 @@ static bool spi_monitor_start_channel_sampler(uint32_t sampler, uint8_t spi_mode
     sampler_state->program_offset = pio_add_program(sampler_state->pio, &g_spi_monitor_programs[sampler]);
     sampler_state->program_loaded = true;
 
-    switch (spi_mode) {
-        case 0u:
-            spi_monitor_mode0_sampler_program_init(sampler_state->pio, sampler_state->sm, sampler_state->program_offset, sampler_state->data_pin_base, sampler_state->clock_pin, sampler_state->cs_gpio, 1.0f);
-            break;
-        case 1u:
-            spi_monitor_mode1_sampler_program_init(sampler_state->pio, sampler_state->sm, sampler_state->program_offset, sampler_state->data_pin_base, sampler_state->clock_pin, sampler_state->cs_gpio, 1.0f);
-            break;
-        case 2u:
-            spi_monitor_mode2_sampler_program_init(sampler_state->pio, sampler_state->sm, sampler_state->program_offset, sampler_state->data_pin_base, sampler_state->clock_pin, sampler_state->cs_gpio, 1.0f);
-            break;
-        default:
-            spi_monitor_mode3_sampler_program_init(sampler_state->pio, sampler_state->sm, sampler_state->program_offset, sampler_state->data_pin_base, sampler_state->clock_pin, sampler_state->cs_gpio, 1.0f);
-            break;
+    if (capture == SPI_MONITOR_CAPTURE_MOSI) {
+        switch (spi_mode) {
+            case 0u:
+                spi_monitor_mode0_mosi_sampler_program_init(sampler_state->pio, sampler_state->sm, sampler_state->program_offset, sampler_state->data_pin_base, sampler_state->clock_pin, sampler_state->cs_gpio, 1.0f);
+                break;
+            case 1u:
+                spi_monitor_mode1_mosi_sampler_program_init(sampler_state->pio, sampler_state->sm, sampler_state->program_offset, sampler_state->data_pin_base, sampler_state->clock_pin, sampler_state->cs_gpio, 1.0f);
+                break;
+            case 2u:
+                spi_monitor_mode2_mosi_sampler_program_init(sampler_state->pio, sampler_state->sm, sampler_state->program_offset, sampler_state->data_pin_base, sampler_state->clock_pin, sampler_state->cs_gpio, 1.0f);
+                break;
+            default:
+                spi_monitor_mode3_mosi_sampler_program_init(sampler_state->pio, sampler_state->sm, sampler_state->program_offset, sampler_state->data_pin_base, sampler_state->clock_pin, sampler_state->cs_gpio, 1.0f);
+                break;
+        }
+    } else {
+        switch (spi_mode) {
+            case 0u:
+                spi_monitor_mode0_sampler_program_init(sampler_state->pio, sampler_state->sm, sampler_state->program_offset, sampler_state->data_pin_base, sampler_state->clock_pin, sampler_state->cs_gpio, 1.0f);
+                break;
+            case 1u:
+                spi_monitor_mode1_sampler_program_init(sampler_state->pio, sampler_state->sm, sampler_state->program_offset, sampler_state->data_pin_base, sampler_state->clock_pin, sampler_state->cs_gpio, 1.0f);
+                break;
+            case 2u:
+                spi_monitor_mode2_sampler_program_init(sampler_state->pio, sampler_state->sm, sampler_state->program_offset, sampler_state->data_pin_base, sampler_state->clock_pin, sampler_state->cs_gpio, 1.0f);
+                break;
+            default:
+                spi_monitor_mode3_sampler_program_init(sampler_state->pio, sampler_state->sm, sampler_state->program_offset, sampler_state->data_pin_base, sampler_state->clock_pin, sampler_state->cs_gpio, 1.0f);
+                break;
+        }
     }
 
     dma_config = dma_channel_get_default_config((uint)sampler_state->dma_channel);
@@ -916,7 +951,7 @@ static bool spi_monitor_apply_bus_capture(uint32_t bus, spi_monitor_capture_t ca
             continue;
         }
 
-        if (!spi_monitor_start_channel_sampler(channel, spi_mode)) {
+        if (!spi_monitor_start_channel_sampler(channel, capture, spi_mode)) {
             for (uint32_t rollback = first_channel; rollback <= channel; ++rollback) {
                 spi_monitor_stop_channel_sampler(rollback);
             }

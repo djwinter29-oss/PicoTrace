@@ -67,12 +67,12 @@ These are the current reference results on the `250 MHz` RP2040 baseline.
 | `15.5 MHz` | `3/3` | Clean payload pass; one trial reported a single sampler overrun counter increment |
 | `16.0 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
 | `16.5 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
-| `17.0 MHz` | `3/3` | Current highest verified lossless pass point after moving SPI to `pio0` and I2C to `pio1` |
-| `17.5 MHz` | `1/3` | First unstable downstream-limited point; failing trials hit `sink=ring` and `peak=256` |
-| `18.0 MHz` | `0/3` | Failure mode moves upstream; sampler overruns dominate |
+| `17.0 MHz` | `3/3` | Clean pass with zero sampler and sink overruns |
+| `17.5 MHz` | `3/3` | Current highest verified lossless pass point after adding the dedicated MOSI-only sampler |
+| `18.0 MHz` | `2/3` | New unstable downstream-limited point; failing trial hit `sink=5 ring=5 peak=256` |
 
 Observed transmit throughput across the verified MOSI pass points at `250 MHz` was about
-`7.4-8.0 Mb/s` over the full transfer window.
+`7.4-8.3 Mb/s` over the full transfer window.
 
 ### MOSI + MISO At 250 MHz
 
@@ -132,6 +132,7 @@ Focused commands used after the `usb_bulk.c` consume-path cleanup:
 
 - `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico --skip-build`
 - `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi --speed-hz 17000000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi --speed-hz 17000000 17500000 18000000 --trials 3`
 - `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi-miso --speed-hz 5800000 --trials 3`
 - `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
 
@@ -142,6 +143,8 @@ Observed results on the cleanup build:
 - MOSI+MISO `5.8 MHz` after folding stream flush policy into `usb_bulk_service_stream()`: still `2/3`; the failing trial remained downstream-limited with `sink=9 sampler=0 ring=9 stalls=523139 peak=256`
 - MOSI `17.0 MHz` after adding host-backpressure versus policy-deferral counters and the whole-packet fast path: `3/3`, with `sink=0 sampler=0 ring=0`, `host_stalls` around `227k-255k`, and `policy_deferrals=0`
 - MOSI+MISO `5.8 MHz` after the same cleanup: `3/3`, with `sink=0 sampler=0 ring=0`, `host_stalls` around `511k-513k`, and `policy_deferrals=0`
+- MOSI after adding the dedicated one-pin MOSI-only sampler: `17.0 MHz` stayed `3/3`, `17.5 MHz` improved to `3/3`, and `18.0 MHz` moved to the new unstable edge at `2/3`
+- MOSI+MISO `5.8 MHz` after the MOSI-only sampler split stayed `3/3`; two trials reported `policy_deferrals=0`, and one slower passing trial reported `policy_deferrals=1`
 - I2C smoke test after the same cleanup stayed at `112` transactions with balanced `starts=112`, `stops=112`, `overruns=0`, and `sticky=0`
 
 Current interpretation:
@@ -152,6 +155,8 @@ Current interpretation:
 - folding stream flush policy into `usb_bulk_service_stream()` simplified ownership, but it did not measurably move the current MOSI+MISO unstable edge on RP2040
 - the new split counters show that the observed downstream pressure in the latest clean runs is entirely host-backpressure-driven on the vendor endpoint; the stream policy itself reported `policy_deferrals=0`
 - the whole-packet fast path plus counter split coincided with a clean `3/3` recheck at MOSI+MISO `5.8 MHz`, so the current branch no longer shows the earlier downstream-limited failure at that point
+- the dedicated MOSI-only sampler materially improved the RP2040 MOSI ceiling: the best current clean point moved from `17.0 MHz` to `17.5 MHz`, and `18.0 MHz` is now the first unstable edge
+- the MOSI-only sampler split did not regress MOSI+MISO or I2C behavior on the latest bench run
 
 ## Current I2C Trace Baseline
 

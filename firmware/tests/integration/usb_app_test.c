@@ -436,6 +436,10 @@ static uint32_t pack_spi_byte_word(uint8_t mosi_byte, uint8_t miso_byte) {
     return pack_spi_sample_word(samples, 8u);
 }
 
+static uint32_t pack_spi_mosi_word(uint8_t mosi_byte) {
+    return mosi_byte;
+}
+
 static uint32_t pack_spi_lane_word(uint8_t data_byte, uint8_t sample_bit_index) {
     uint8_t samples[8];
 
@@ -614,7 +618,7 @@ static void test_spi_monitor_emits_mosi_only_trace_packet(void) {
     config.spi_mode = 1u;
     config.channel_select_mask = 0x02u;
     config.timeout_us = 800u;
-    raw_words[0] = pack_spi_byte_word(0x5Au, 0xC3u);
+    raw_words[0] = pack_spi_mosi_word(0x5Au);
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
     assert(spi_monitor_test_feed_samples(0u, 0x02u, 50u, raw_words, 1u) == true);
@@ -642,7 +646,7 @@ static void test_spi_monitor_stream_disable_blocks_ring_output(void) {
     config.spi_mode = 0u;
     config.channel_select_mask = 0x01u;
     config.timeout_us = 1000u;
-    raw_words[0] = pack_spi_byte_word(0x33u, 0xCCu);
+    raw_words[0] = pack_spi_mosi_word(0x33u);
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
     app_control_set_stream_enabled(false);
@@ -734,7 +738,7 @@ static void test_spi_monitor_invalid_reconfig_does_not_flush_transaction(void) {
     invalid.capture = SPI_MONITOR_CAPTURE_MOSI;
     invalid.spi_mode = 2u;
     invalid.channel_select_mask = 0u;
-    raw_words[0] = pack_spi_byte_word(0x96u, 0x00u);
+    raw_words[0] = pack_spi_mosi_word(0x96u);
 
     assert(spi_monitor_set_bus_config(0u, &start) == SPI_MONITOR_RC_OK);
     assert(spi_monitor_test_feed_samples(0u, 0x01u, 100u, raw_words, 1u) == true);
@@ -762,7 +766,7 @@ static void test_spi_monitor_open_transaction_does_not_count_packet_before_ring_
     config.spi_mode = 0u;
     config.channel_select_mask = 0x01u;
     config.timeout_us = 1000u;
-    raw_words[0] = pack_spi_byte_word(0x33u, 0x00u);
+    raw_words[0] = pack_spi_mosi_word(0x33u);
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
     assert(spi_monitor_test_feed_samples(0u, 0x01u, 25u, raw_words, 1u) == true);
@@ -788,11 +792,11 @@ static void test_spi_monitor_idle_cs_handoff_drops_inactive_words(void) {
     config.spi_mode = 0u;
     config.channel_select_mask = 0x01u;
     config.timeout_us = 1000u;
-    raw_words[0] = pack_spi_byte_word(0x12u, 0x00u);
+    raw_words[0] = pack_spi_mosi_word(0x12u);
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
     assert(spi_monitor_test_feed_samples(0u, 0x01u, 100u, raw_words, 1u) == true);
-    raw_words[0] = pack_spi_byte_word(0x34u, 0x00u);
+    raw_words[0] = pack_spi_mosi_word(0x34u);
     assert(spi_monitor_test_feed_samples(0u, 0x00u, 200u, raw_words, 1u) == true);
 
     spi_monitor_test_poll_timeout(0u, 1500u);
@@ -818,7 +822,7 @@ static void test_spi_monitor_poll_flushes_short_dma_progress(void) {
     config.timeout_us = 1000u;
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
-    raw_words[0] = pack_spi_byte_word(0x9Au, 0x00u);
+    raw_words[0] = pack_spi_mosi_word(0x9Au);
     assert(spi_monitor_test_stage_channel_dma_progress(0u, raw_words, 1u) == true);
 
     stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, false);
@@ -856,8 +860,8 @@ static void test_spi_monitor_poll_flushes_independent_same_bus_channel_dma_progr
     config.timeout_us = 1000u;
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
-    channel0_words[0] = pack_spi_byte_word(0x11u, 0x00u);
-    channel1_words[0] = pack_spi_byte_word(0x22u, 0x00u);
+    channel0_words[0] = pack_spi_mosi_word(0x11u);
+    channel1_words[0] = pack_spi_mosi_word(0x22u);
     assert(spi_monitor_test_stage_channel_dma_progress(0u, channel0_words, 1u) == true);
     assert(spi_monitor_test_stage_channel_dma_progress(1u, channel1_words, 1u) == true);
 
@@ -922,7 +926,7 @@ static void test_spi_monitor_poll_timeout_refreshes_channel_overrun_status(void)
     config.spi_mode = 0u;
     config.channel_select_mask = 0x01u;
     config.timeout_us = 1000u;
-    raw_words[0] = pack_spi_byte_word(0xAAu, 0x00u);
+    raw_words[0] = pack_spi_mosi_word(0xAAu);
 
     for (index = 0u; index < TRACE_RING_CAPACITY; ++index) {
         packet.header.sequence = (uint16_t)index;
@@ -953,7 +957,7 @@ static void test_spi_monitor_poll_timeout_ignores_stale_now_snapshot(void) {
     config.spi_mode = 0u;
     config.channel_select_mask = 0x01u;
     config.timeout_us = 1000u;
-    raw_words[0] = pack_spi_byte_word(0x6Au, 0x00u);
+    raw_words[0] = pack_spi_mosi_word(0x6Au);
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
     assert(spi_monitor_test_feed_samples(0u, 0x01u, 100u, raw_words, 1u) == true);
@@ -984,8 +988,8 @@ static void test_spi_monitor_boundary_offset_splits_same_channel_transactions(vo
     config.spi_mode = 0u;
     config.channel_select_mask = 0x01u;
     config.timeout_us = 1000u;
-    raw_words[0] = pack_spi_byte_word(0x12u, 0x00u);
-    raw_words[1] = pack_spi_byte_word(0x34u, 0x00u);
+    raw_words[0] = pack_spi_mosi_word(0x12u);
+    raw_words[1] = pack_spi_mosi_word(0x34u);
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
     assert(spi_monitor_test_stage_channel_dma_progress_with_boundary(0u, raw_words, 2u, 1u) == true);
@@ -1035,7 +1039,7 @@ static void test_spi_monitor_overflow_preserves_continued_for_same_transaction(v
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
 
     for (index = 0u; index < (TRACE_PACKET_PAYLOAD_BYTES + 1u); ++index) {
-        raw_word[0] = pack_spi_byte_word((uint8_t)index, 0u);
+        raw_word[0] = pack_spi_mosi_word((uint8_t)index);
         assert(spi_monitor_test_feed_samples(0u, 0x01u, 10u, raw_word, 1u) == true);
     }
 
@@ -1047,12 +1051,12 @@ static void test_spi_monitor_overflow_preserves_continued_for_same_transaction(v
     }
 
     for (index = 0u; index < TRACE_PACKET_PAYLOAD_BYTES; ++index) {
-        raw_word[0] = pack_spi_byte_word((uint8_t)(0x40u + index), 0u);
+        raw_word[0] = pack_spi_mosi_word((uint8_t)(0x40u + index));
         expected_retry_byte = (uint8_t)(0x40u + index);
         assert(spi_monitor_test_feed_samples(0u, 0x01u, 20u, raw_word, 1u) == true);
     }
 
-    raw_word[0] = pack_spi_byte_word(0xE1u, 0u);
+    raw_word[0] = pack_spi_mosi_word(0xE1u);
     assert(spi_monitor_test_feed_samples(0u, 0x01u, 30u, raw_word, 1u) == true);
 
     while (trace_ring_available() != 0u) {
@@ -2079,7 +2083,7 @@ static void test_hid_spi_monitor_get_status_returns_bus_payload(void) {
     assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
     assert(response.opcode == USB_HID_OPCODE_SPI_MONITOR_GET_STATUS);
     assert(response.status == USB_HID_STATUS_OK);
-    assert(response.payload_length == 38u);
+    assert(response.payload_length == 46u);
     assert(response.payload[0] == 1u);
     assert(response.payload[1] == 1u);
     assert(response.payload[2] == 1u);
@@ -2097,6 +2101,8 @@ static void test_hid_spi_monitor_get_status_returns_bus_payload(void) {
     assert(response.payload[26] == 0u);
     assert(response.payload[30] == 0u);
     assert(response.payload[34] == 0u);
+    assert(response.payload[38] == 0u);
+    assert(response.payload[42] == 0u);
 }
 
 static void test_hid_spi_monitor_get_all_status_returns_all_channels(void) {
