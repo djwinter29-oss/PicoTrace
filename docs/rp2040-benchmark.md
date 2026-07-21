@@ -126,6 +126,33 @@ Current interpretation:
 - the first known-good reference for comparison remains the baseline above: MOSI lossless through `17.0 MHz` and MOSI+MISO lossless through `5.8 MHz`
 - until a follow-up benchmark re-establishes the lossless `17.0 MHz` MOSI point on the cleaned source tree, treat the current refactor branch as performance-regressed
 
+### RP2040 USB Bulk Consume-Path Probe On 2026-07-21
+
+Focused commands used after the `usb_bulk.c` consume-path cleanup:
+
+- `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico --skip-build`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi --speed-hz 17000000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --capture mosi-miso --speed-hz 5800000 --trials 3`
+- `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
+
+Observed results on the cleanup build:
+
+- MOSI `17.0 MHz`: `3/3`, still lossless; one passing trial reported `sampler=1`, while downstream counters stayed at `sink=0 ring=0`
+- MOSI+MISO `5.8 MHz`: `2/3`; the earlier failing trial was downstream-limited with `sink=37 sampler=0 ring=37 stalls=491918 peak=256`
+- MOSI+MISO `5.8 MHz` after folding stream flush policy into `usb_bulk_service_stream()`: still `2/3`; the failing trial remained downstream-limited with `sink=9 sampler=0 ring=9 stalls=523139 peak=256`
+- MOSI `17.0 MHz` after adding host-backpressure versus policy-deferral counters and the whole-packet fast path: `3/3`, with `sink=0 sampler=0 ring=0`, `host_stalls` around `227k-255k`, and `policy_deferrals=0`
+- MOSI+MISO `5.8 MHz` after the same cleanup: `3/3`, with `sink=0 sampler=0 ring=0`, `host_stalls` around `511k-513k`, and `policy_deferrals=0`
+- I2C smoke test after the same cleanup stayed at `112` transactions with balanced `starts=112`, `stops=112`, `overruns=0`, and `sticky=0`
+
+Current interpretation:
+
+- the consume-path cleanup did not reduce the current MOSI-only pass point; `17.0 MHz` remains clean enough to keep the existing baseline unchanged
+- MOSI+MISO at `5.8 MHz` remains on the unstable edge on the current branch even though the best-known baseline still records `5/5`
+- the failing `5.8 MHz` trial is still downstream-limited, so the active suspicion remains ring or USB-drain pressure rather than sampler loss
+- folding stream flush policy into `usb_bulk_service_stream()` simplified ownership, but it did not measurably move the current MOSI+MISO unstable edge on RP2040
+- the new split counters show that the observed downstream pressure in the latest clean runs is entirely host-backpressure-driven on the vendor endpoint; the stream policy itself reported `policy_deferrals=0`
+- the whole-packet fast path plus counter split coincided with a clean `3/3` recheck at MOSI+MISO `5.8 MHz`, so the current branch no longer shows the earlier downstream-limited failure at that point
+
 ## Current I2C Trace Baseline
 
 These are the current reference expectations for the Raspberry Pi Pico (`RP2040`) I2C trace smoke
@@ -146,6 +173,7 @@ Current interpretation:
 - balanced `start` and `stop` counts mean the captured I2C event stream stayed complete for the scan.
 - `overruns=0` and `sticky=0` mean the I2C monitor stayed healthy during the smoke test.
 - the latest validation after moving I2C to `pio1` kept the same `112`-transaction smoke-test result with `overruns=0` and `sticky=0`
+- the latest validation after the `usb_bulk.c` consume-path cleanup kept the same `112`-transaction smoke-test result with `overruns=0` and `sticky=0`
 
 ### Current I2C Stress Check
 

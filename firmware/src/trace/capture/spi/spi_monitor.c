@@ -72,6 +72,8 @@ typedef struct {
     uint32_t timeout_us; /**< Bus-wide inter-byte timeout applied to all sibling logical channels. */
     uint32_t ring_drop_count_base; /**< Baseline trace-ring drop count captured when the current session started. */
     uint32_t usb_stall_count_base; /**< Baseline USB stream stall count captured when the current session started. */
+    uint32_t usb_host_backpressure_stall_count_base; /**< Baseline host-backpressure USB stall count captured when the current session started. */
+    uint32_t usb_policy_deferral_count_base; /**< Baseline stream-policy deferral count captured when the current session started. */
     uint32_t peak_ring_depth_packets; /**< Peak queued trace-packet depth observed during the current session. */
 } spi_monitor_bus_state_t;
 
@@ -1043,6 +1045,8 @@ static void spi_monitor_reset_bus_state(spi_monitor_bus_state_t *bus_state) {
     bus_state->timeout_us = 0u;
     bus_state->ring_drop_count_base = 0u;
     bus_state->usb_stall_count_base = 0u;
+    bus_state->usb_host_backpressure_stall_count_base = 0u;
+    bus_state->usb_policy_deferral_count_base = 0u;
     bus_state->peak_ring_depth_packets = 0u;
 }
 
@@ -1107,6 +1111,8 @@ static void spi_monitor_fill_bus_status(uint32_t bus, spi_monitor_bus_status_t *
     status_out->sampler_overrun_count = sampler_overrun_count;
     status_out->ring_drop_count = trace_ring_dropped_packets() - bus_state->ring_drop_count_base;
     status_out->usb_stall_count = usb_bulk_stall_count() - bus_state->usb_stall_count_base;
+    status_out->usb_host_backpressure_stall_count = usb_bulk_host_backpressure_stall_count() - bus_state->usb_host_backpressure_stall_count_base;
+    status_out->usb_policy_deferral_count = usb_bulk_policy_deferral_count() - bus_state->usb_policy_deferral_count_base;
     status_out->peak_ring_depth_packets = bus_state->peak_ring_depth_packets;
 }
 
@@ -1245,6 +1251,8 @@ spi_monitor_rc_t spi_monitor_set_bus_config(uint32_t bus, const spi_monitor_bus_
     bus_state->timeout_us = timeout_us;
     bus_state->ring_drop_count_base = trace_ring_dropped_packets();
     bus_state->usb_stall_count_base = usb_bulk_stall_count();
+    bus_state->usb_host_backpressure_stall_count_base = usb_bulk_host_backpressure_stall_count();
+    bus_state->usb_policy_deferral_count_base = usb_bulk_policy_deferral_count();
     bus_state->peak_ring_depth_packets = trace_ring_available();
     for (channel = first_channel; channel < spi_monitor_bus_first_channel(bus) + SPI_MONITOR_CS_SLOTS_PER_BUS; ++channel) {
         spi_monitor_reset_channel_runtime(&g_spi_monitor_channel_runtimes[channel]);

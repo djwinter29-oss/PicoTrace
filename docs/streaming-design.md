@@ -45,7 +45,7 @@ emit placeholder vendor traffic when no trace packets are queued.
 
 The current firmware now keeps the consumer side directly in `firmware/src/usb/usb_bulk.c`:
 
-- `usb_bulk_poll_stream()` drains completed `trace_packet_t` records from the trace ring
+- `usb_bulk_service_stream()` drains completed `trace_packet_t` records from the trace ring and flushes the vendor endpoint
 - partial USB writes retain the peeked ring slot until the full logical packet has been sent
 - disabling stream discards any partially transmitted logical packet so the next enable restarts from a clean packet boundary
 - no vendor data is emitted when the ring is empty

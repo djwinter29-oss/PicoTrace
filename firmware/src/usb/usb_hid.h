@@ -44,32 +44,27 @@ typedef struct {
 	uint8_t payload[USB_HID_REPORT_SIZE - 4u]; /**< Opcode-specific request or response bytes. */
 } usb_hid_command_t;
 
+/** @brief Lightweight HID observability counters for control-path debugging. */
+typedef struct {
+	uint32_t busy_rejects; /**< Incoming reports rejected because the single command slot was occupied. */
+	uint32_t unknown_opcodes; /**< Incoming reports rejected because their opcode was not recognized. */
+} usb_hid_stats_t;
+
 _Static_assert(sizeof(usb_hid_command_t) == USB_HID_REPORT_SIZE, "usb_hid_command_t must match the HID report size");
-
-/**
- * @brief Take the currently staged HID command if one is pending.
- * @param command Caller-owned destination for the copied command.
- * @return `true` when a command was copied into @p command, otherwise `false`.
- */
-bool usb_hid_take_command(usb_hid_command_t *command);
-
-/**
- * @brief Publish a HID response packet for the next input report read.
- * @param response Caller-owned response packet to copy into the shared response slot.
- */
-void usb_hid_set_response(const usb_hid_command_t *response);
-
-/**
- * @brief Initialize a HID response with the request opcode, sequence, and status.
- * @param response Caller-owned destination for the prepared response.
- * @param request Request being answered.
- * @param status Initial HID status code to place in the response.
- */
-void usb_hid_prepare_response(usb_hid_command_t *response, const usb_hid_command_t *request, usb_hid_status_t status);
 
 /**
  * @brief Service one pending HID command on the USB-owning core.
  */
 void usb_hid_poll(void);
+
+/**
+ * @brief Return the current HID observability counters.
+ */
+usb_hid_stats_t usb_hid_get_stats(void);
+
+/**
+ * @brief Clear the HID observability counters.
+ */
+void usb_hid_reset_stats(void);
 
 #endif

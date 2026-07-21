@@ -37,6 +37,7 @@ static uint32_t stub_cdc_write_available_value;
 static uint32_t stub_vendor_available;
 static uint8_t stub_vendor_tx_data[4096];
 static uint32_t stub_vendor_tx_length;
+static uint32_t stub_vendor_write_calls;
 static uint32_t stub_vendor_flush_calls;
 static uint32_t stub_watchdog_reboot_calls;
 static uint32_t stub_watchdog_reboot_pc;
@@ -139,6 +140,7 @@ uint32_t tud_vendor_n_write(uint8_t itf, const void *buffer, uint32_t size) {
     memcpy(&stub_vendor_tx_data[stub_vendor_tx_length], buffer, size);
     stub_vendor_tx_length += size;
     stub_vendor_available -= size;
+    stub_vendor_write_calls += 1u;
     return size;
 }
 
@@ -318,6 +320,7 @@ void reset_usb_stub(void) {
     memset(stub_cdc_tx_data, 0, sizeof(stub_cdc_tx_data));
     stub_vendor_available = sizeof(stub_vendor_tx_data);
     stub_vendor_tx_length = 0u;
+    stub_vendor_write_calls = 0u;
     stub_vendor_flush_calls = 0u;
     stub_watchdog_reboot_calls = 0u;
     stub_watchdog_reboot_pc = 0u;
@@ -361,6 +364,8 @@ void reset_usb_stub(void) {
     );
     spi_monitor_control_set_inline_mode(true);
     stub_led_set_calls = 0u;
+    usb_cdc_reset_stats();
+    usb_hid_reset_stats();
     device_cli_init(&test_device_cli_transport);
 }
 
@@ -1107,6 +1112,105 @@ static void test_cli_help_is_flushed_after_temporary_tx_backpressure(void) {
     assert(stub_cdc_flush_calls >= 1u);
 }
 
+static void test_cdc_rx_callback_leaves_remaining_packets_for_later_pass(void) {
+    uint8_t payload[192];
+    uint8_t drained[192];
+
+    reset_usb_stub();
+    for (uint32_t index = 0u; index < sizeof(payload); ++index) {
+        payload[index] = (uint8_t)index;
+    }
+    load_cdc_rx(payload, sizeof(payload));
+
+    tud_cdc_rx_cb(0u);
+
+    assert(stub_cdc_rx_offset == 128u);
+    assert(usb_cdc_read(drained, sizeof(drained)) == 128u);
+    assert(memcmp(drained, payload, 128u) == 0);
+
+    tud_cdc_rx_cb(0u);
+
+    assert(stub_cdc_rx_offset == sizeof(payload));
+    assert(usb_cdc_read(drained, sizeof(drained)) == 64u);
+    assert(memcmp(drained, &payload[128], 64u) == 0);
+}
+
+static void test_cdc_rx_callback_preserves_packet_tail_when_queue_fills(void) {
+    uint8_t initial[512];
+    uint8_t overflow[80];
+    uint8_t drained[512];
+    usb_cdc_stats_t stats;
+
+    reset_usb_stub();
+    while (usb_cdc_read(drained, sizeof(drained)) != 0u) {
+    }
+    for (uint32_t index = 0u; index < sizeof(initial); ++index) {
+        initial[index] = (uint8_t)index;
+    }
+    for (uint32_t index = 0u; index < sizeof(overflow); ++index) {
+        overflow[index] = (uint8_t)(0x80u + index);
+    }
+
+    load_cdc_rx(initial, 256u);
+    tud_cdc_rx_cb(0u);
+    tud_cdc_rx_cb(0u);
+    load_cdc_rx(&initial[256], 256u);
+    tud_cdc_rx_cb(0u);
+    tud_cdc_rx_cb(0u);
+
+    load_cdc_rx(overflow, sizeof(overflow));
+    tud_cdc_rx_cb(0u);
+
+    assert(stub_cdc_rx_offset == 0u);
+    stats = usb_cdc_get_stats();
+    assert(stats.rx_dropped_bytes == 0u);
+    assert(usb_cdc_read(drained, sizeof(drained)) == sizeof(initial));
+    assert(memcmp(drained, initial, sizeof(initial)) == 0);
+
+    tud_cdc_rx_cb(0u);
+
+    assert(stub_cdc_rx_offset == sizeof(overflow));
+    assert(usb_cdc_read(drained, sizeof(drained)) == sizeof(overflow));
+    assert(memcmp(drained, overflow, sizeof(overflow)) == 0);
+}
+
+static void test_cdc_tx_poll_limits_one_pass_budget(void) {
+    uint8_t payload[192];
+    uint8_t drained[512];
+
+    reset_usb_stub();
+    while (usb_cdc_read(drained, sizeof(drained)) != 0u) {
+    }
+    usb_cdc_poll_tx();
+    stub_cdc_tx_length = 0u;
+    stub_cdc_flush_calls = 0u;
+    memset(stub_cdc_tx_data, 0, sizeof(stub_cdc_tx_data));
+    for (uint32_t index = 0u; index < sizeof(payload); ++index) {
+        payload[index] = (uint8_t)(0xA0u + index);
+    }
+
+    assert(usb_cdc_write(payload, sizeof(payload)) == true);
+    assert(stub_cdc_tx_length == 128u);
+    assert(memcmp(stub_cdc_tx_data, payload, 128u) == 0);
+
+    usb_cdc_poll_tx();
+
+    assert(stub_cdc_tx_length == sizeof(payload));
+    assert(memcmp(stub_cdc_tx_data, payload, sizeof(payload)) == 0);
+}
+
+static void test_cdc_tx_enqueue_failure_is_counted(void) {
+    uint8_t payload[1025u];
+    usb_cdc_stats_t stats;
+
+    reset_usb_stub();
+    memset(payload, 0x5Au, sizeof(payload));
+
+    assert(usb_cdc_write(payload, sizeof(payload)) == false);
+    stats = usb_cdc_get_stats();
+    assert(stats.tx_enqueue_failures == 1u);
+}
+
 static void test_cli_led_command_and_hid_led_command_share_action(void) {
     static const uint8_t cli_payload[] = {'l', 'e', 'd', ' ', 'o', 'n', '\r'};
     usb_hid_command_t hid_command = {0};
@@ -1286,6 +1390,58 @@ static void test_hid_reboot_command_runs_once(void) {
     assert(response.status == USB_HID_STATUS_OK);
 }
 
+static void test_hid_second_report_is_rejected_without_overwriting_pending_command(void) {
+    usb_hid_command_t first = {0};
+    usb_hid_command_t second = {0};
+    usb_hid_command_t response = {0};
+    usb_hid_stats_t stats;
+
+    reset_usb_stub();
+    first.opcode = USB_HID_OPCODE_LED_ON;
+    first.sequence = 10u;
+    second.opcode = USB_HID_OPCODE_LED_OFF;
+    second.sequence = 11u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&first, sizeof(first));
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&second, sizeof(second));
+
+    assert(stub_led_set_calls == 0u);
+    stats = usb_hid_get_stats();
+    assert(stats.busy_rejects == 1u);
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_LED_OFF);
+    assert(response.sequence == 11u);
+    assert(response.status == USB_HID_STATUS_BUSY);
+
+    usb_hid_poll();
+
+    assert(stub_led_set_calls == 1u);
+    assert(stub_led_state == true);
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_LED_ON);
+    assert(response.sequence == 10u);
+    assert(response.status == USB_HID_STATUS_OK);
+}
+
+static void test_hid_unknown_opcode_is_counted(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+    usb_hid_stats_t stats;
+
+    reset_usb_stub();
+    command.opcode = 0x7Fu;
+    command.sequence = 20u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    stats = usb_hid_get_stats();
+    assert(stats.unknown_opcodes == 1u);
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == 0x7Fu);
+    assert(response.status == USB_HID_STATUS_UNKNOWN_COMMAND);
+}
+
 static void test_system_reboot_uses_watchdog_reboot(void) {
     reset_usb_stub();
 
@@ -1442,13 +1598,50 @@ static void test_usb_bulk_poll_stream_drains_trace_packet(void) {
     trace_ring_init();
 
     assert(trace_ring_push(&packet) == true);
-    usb_bulk_poll_stream(app_control_stream_enabled());
-    usb_bulk_flush();
+    usb_bulk_service_stream(app_control_stream_enabled());
 
     assert(stub_vendor_tx_length == packet_bytes);
+    assert(stub_vendor_write_calls == 1u);
     assert(memcmp(stub_vendor_tx_data, &packet, packet_bytes) == 0);
     assert(trace_ring_available() == 0u);
     assert(stub_vendor_flush_calls == 1u);
+}
+
+static void test_usb_bulk_service_stream_counts_host_backpressure_stalls(void) {
+    trace_packet_t packet = make_test_trace_packet(45u);
+    uint32_t total_stalls_before;
+    uint32_t host_stalls_before;
+    uint32_t policy_deferrals_before;
+
+    reset_usb_stub();
+    trace_ring_init();
+
+    total_stalls_before = usb_bulk_stall_count();
+    host_stalls_before = usb_bulk_host_backpressure_stall_count();
+    policy_deferrals_before = usb_bulk_policy_deferral_count();
+    assert(trace_ring_push(&packet) == true);
+    stub_vendor_available = 0u;
+
+    assert(usb_bulk_service_stream(app_control_stream_enabled()) == false);
+    assert(usb_bulk_stall_count() == (total_stalls_before + 1u));
+    assert(usb_bulk_host_backpressure_stall_count() == (host_stalls_before + 1u));
+    assert(usb_bulk_policy_deferral_count() == policy_deferrals_before);
+}
+
+static void test_usb_bulk_stream_write_counts_policy_deferrals(void) {
+    uint8_t frame[130];
+    uint32_t index;
+    uint32_t deferrals_before;
+
+    reset_usb_stub();
+    stub_vendor_available = 100u;
+    deferrals_before = usb_bulk_policy_deferral_count();
+    for (index = 0u; index < sizeof(frame); ++index) {
+        frame[index] = (uint8_t)(0x40u + index);
+    }
+
+    assert(usb_bulk_stream_write(frame, sizeof(frame)) == 64u);
+    assert(usb_bulk_policy_deferral_count() == (deferrals_before + 1u));
 }
 
 static void test_usb_bulk_poll_stream_resumes_partial_trace_packet_write(void) {
@@ -1460,13 +1653,12 @@ static void test_usb_bulk_poll_stream_resumes_partial_trace_packet_write(void) {
 
     assert(trace_ring_push(&packet) == true);
     stub_vendor_available = 8u;
-    usb_bulk_poll_stream(app_control_stream_enabled());
+    usb_bulk_service_stream(app_control_stream_enabled());
     assert(stub_vendor_tx_length == 8u);
     assert(trace_ring_available() == 1u);
 
     stub_vendor_available = sizeof(stub_vendor_tx_data) - stub_vendor_tx_length;
-    usb_bulk_poll_stream(app_control_stream_enabled());
-    usb_bulk_flush();
+    usb_bulk_service_stream(app_control_stream_enabled());
 
     assert(stub_vendor_tx_length == packet_bytes);
     assert(memcmp(stub_vendor_tx_data, &packet, packet_bytes) == 0);
@@ -1482,18 +1674,18 @@ static void test_usb_bulk_poll_stream_restarts_partial_packet_after_stream_disab
 
     assert(trace_ring_push(&packet) == true);
     stub_vendor_available = 8u;
-    usb_bulk_poll_stream(app_control_stream_enabled());
+    usb_bulk_service_stream(app_control_stream_enabled());
     assert(stub_vendor_tx_length == 8u);
     assert(trace_ring_available() == 1u);
 
     app_control_set_stream_enabled(false);
-    usb_bulk_poll_stream(app_control_stream_enabled());
+    usb_bulk_service_stream(app_control_stream_enabled());
 
     memset(stub_vendor_tx_data, 0, sizeof(stub_vendor_tx_data));
     stub_vendor_tx_length = 0u;
     stub_vendor_available = sizeof(stub_vendor_tx_data);
     app_control_set_stream_enabled(true);
-    usb_bulk_poll_stream(app_control_stream_enabled());
+    usb_bulk_service_stream(app_control_stream_enabled());
 
     assert(stub_vendor_tx_length == packet_bytes);
     assert(memcmp(stub_vendor_tx_data, &packet, packet_bytes) == 0);
@@ -1508,8 +1700,7 @@ static void test_usb_bulk_poll_stream_drops_packet_with_invalid_payload_len(void
 
     packet.header.payload_len = (uint16_t)(TRACE_PACKET_PAYLOAD_BYTES + 1u);
     assert(trace_ring_push(&packet) == true);
-    usb_bulk_poll_stream(app_control_stream_enabled());
-    usb_bulk_flush();
+    usb_bulk_service_stream(app_control_stream_enabled());
 
     assert(stub_vendor_tx_length == 0u);
     assert(trace_ring_available() == 0u);
@@ -1518,8 +1709,7 @@ static void test_usb_bulk_poll_stream_drops_packet_with_invalid_payload_len(void
 
 static void test_usb_bulk_poll_stream_emits_nothing_when_ring_empty(void) {
     reset_usb_stub();
-    usb_bulk_poll_stream(app_control_stream_enabled());
-    usb_bulk_flush();
+    usb_bulk_service_stream(app_control_stream_enabled());
 
     assert(stub_vendor_tx_length == 0u);
     assert(stub_vendor_flush_calls == 1u);
@@ -1539,6 +1729,24 @@ static void test_stream_write_uses_partial_vendor_space(void) {
     assert(stub_vendor_tx_length == 512u);
     assert(memcmp(stub_vendor_tx_data, frame, stub_vendor_tx_length) == 0);
     assert(stub_vendor_available == 0u);
+}
+
+static void test_stream_write_counts_policy_deferred_bytes(void) {
+    uint8_t frame[130];
+    uint32_t index;
+    uint32_t deferred_before;
+
+    reset_usb_stub();
+    stub_vendor_available = 100u;
+    deferred_before = usb_bulk_deferred_bytes_count();
+    for (index = 0u; index < sizeof(frame); ++index) {
+        frame[index] = (uint8_t)(0x80u + index);
+    }
+
+    assert(usb_bulk_stream_write(frame, sizeof(frame)) == 64u);
+    assert(stub_vendor_tx_length == 64u);
+    assert(memcmp(stub_vendor_tx_data, frame, stub_vendor_tx_length) == 0);
+    assert(usb_bulk_deferred_bytes_count() == (deferred_before + 36u));
 }
 
 static void test_vendor_write_uses_bulk_in_interface(void) {
@@ -1746,6 +1954,43 @@ static void test_hid_i2c_monitor_get_all_status_rejects_failed_snapshot(void) {
     assert(response.payload_length == 0u);
 }
 
+static void test_hid_i2c_monitor_get_status_reports_invalid_channel(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+
+    reset_usb_stub();
+    command.opcode = USB_HID_OPCODE_I2C_MONITOR_GET_STATUS;
+    command.sequence = 16u;
+    command.payload_length = 1u;
+    command.payload[0] = 7u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_I2C_MONITOR_GET_STATUS);
+    assert(response.status == USB_HID_STATUS_BAD_LENGTH);
+    assert(response.payload_length == 0u);
+}
+
+static void test_hid_i2c_monitor_get_all_status_reports_busy(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+
+    reset_usb_stub();
+    stub_monitor_result = I2C_MONITOR_RC_BUSY;
+    command.opcode = USB_HID_OPCODE_I2C_MONITOR_GET_ALL_STATUS;
+    command.sequence = 17u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_I2C_MONITOR_GET_ALL_STATUS);
+    assert(response.status == USB_HID_STATUS_BUSY);
+    assert(response.payload_length == 0u);
+}
+
 static void test_hid_spi_monitor_set_config_updates_bus(void) {
     usb_hid_command_t command = {0};
     usb_hid_command_t response = {0};
@@ -1920,6 +2165,43 @@ static void test_hid_spi_monitor_get_all_status_rejects_failed_snapshot(void) {
     assert(response.payload_length == 0u);
 }
 
+static void test_hid_spi_monitor_get_status_reports_invalid_bus(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+
+    reset_usb_stub();
+    command.opcode = USB_HID_OPCODE_SPI_MONITOR_GET_STATUS;
+    command.sequence = 18u;
+    command.payload_length = 1u;
+    command.payload[0] = 3u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_SPI_MONITOR_GET_STATUS);
+    assert(response.status == USB_HID_STATUS_BAD_LENGTH);
+    assert(response.payload_length == 0u);
+}
+
+static void test_hid_spi_monitor_get_all_status_reports_busy(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+
+    reset_usb_stub();
+    stub_spi_monitor_result = SPI_MONITOR_RC_BUSY;
+    command.opcode = USB_HID_OPCODE_SPI_MONITOR_GET_ALL_STATUS;
+    command.sequence = 19u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_SPI_MONITOR_GET_ALL_STATUS);
+    assert(response.status == USB_HID_STATUS_BUSY);
+    assert(response.payload_length == 0u);
+}
+
 int main(void) {
     test_spi_monitor_bus_config_updates_all_bus_channels();
     test_spi_monitor_allows_different_buses_to_use_different_modes();
@@ -1945,6 +2227,10 @@ int main(void) {
     test_cli_unknown_command_writes_fixed_helper();
     test_cli_help_writes_response_without_connected_flag();
     test_cli_help_is_flushed_after_temporary_tx_backpressure();
+    test_cdc_rx_callback_leaves_remaining_packets_for_later_pass();
+    test_cdc_rx_callback_preserves_packet_tail_when_queue_fills();
+    test_cdc_tx_poll_limits_one_pass_budget();
+    test_cdc_tx_enqueue_failure_is_counted();
     test_cli_version_reports_firmware_version();
     test_cli_led_command_and_hid_led_command_share_action();
     test_cli_reboot_command_uses_system_reboot();
@@ -1969,7 +2255,10 @@ int main(void) {
     test_usb_bulk_poll_stream_restarts_partial_packet_after_stream_disable();
     test_usb_bulk_poll_stream_drops_packet_with_invalid_payload_len();
     test_usb_bulk_poll_stream_emits_nothing_when_ring_empty();
+    test_usb_bulk_service_stream_counts_host_backpressure_stalls();
+    test_usb_bulk_stream_write_counts_policy_deferrals();
     test_stream_write_uses_partial_vendor_space();
+    test_stream_write_counts_policy_deferred_bytes();
     test_vendor_write_uses_bulk_in_interface();
     test_hid_builtin_command_returns_status_response();
     test_hid_stream_command_updates_shared_state();
@@ -1978,11 +2267,17 @@ int main(void) {
     test_hid_i2c_monitor_get_status_returns_payload();
     test_hid_i2c_monitor_get_all_status_returns_all_channels();
     test_hid_i2c_monitor_get_all_status_rejects_failed_snapshot();
+    test_hid_i2c_monitor_get_status_reports_invalid_channel();
+    test_hid_i2c_monitor_get_all_status_reports_busy();
     test_hid_spi_monitor_set_config_updates_bus();
     test_hid_spi_monitor_set_config_reports_busy();
     test_hid_spi_monitor_get_status_returns_bus_payload();
     test_hid_spi_monitor_get_all_status_returns_all_channels();
     test_hid_spi_monitor_get_all_status_rejects_failed_snapshot();
+    test_hid_spi_monitor_get_status_reports_invalid_bus();
+    test_hid_spi_monitor_get_all_status_reports_busy();
     test_hid_reboot_command_runs_once();
+    test_hid_second_report_is_rejected_without_overwriting_pending_command();
+    test_hid_unknown_opcode_is_counted();
     return 0;
 }

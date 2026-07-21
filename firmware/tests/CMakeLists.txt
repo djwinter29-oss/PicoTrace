@@ -13,6 +13,7 @@ enable_testing()
 
 add_executable(usb_app_test
     ../src/app_control.c
+    ../src/device_control.c
     integration/app_control_test.c
     ../src/cli/cli_shell.c
     ../src/cli/device_cli.c

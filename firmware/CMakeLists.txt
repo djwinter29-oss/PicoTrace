@@ -14,6 +14,7 @@ pico_sdk_init()
 
 add_executable(picotrace
     src/app_control.c
+    src/device_control.c
     src/cli/cli_shell.c
     src/cli/device_cli.c
     src/main.c

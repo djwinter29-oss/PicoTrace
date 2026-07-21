@@ -117,14 +117,8 @@ int main(void) {
         usb_hid_poll();
 
         if (tud_ready()) {
-            bool stream_flushed = false;
-
             for (uint32_t pass = 0u; pass < STREAM_SERVICE_PASSES; ++pass) {
-                bool stream_progress = usb_bulk_poll_stream(app_control_stream_enabled());
-                if (stream_progress) {
-                    usb_bulk_flush();
-                    stream_flushed = true;
-                }
+                bool stream_progress = usb_bulk_service_stream(app_control_stream_enabled());
 
                 /* Interleave control-path flushing with stream writes to avoid CDC starvation. */
                 usb_cdc_poll_tx();
@@ -133,10 +127,6 @@ int main(void) {
                 if (!stream_progress) {
                     break;
                 }
-            }
-
-            if (app_control_stream_enabled() && !stream_flushed) {
-                usb_bulk_flush();
             }
         }
 

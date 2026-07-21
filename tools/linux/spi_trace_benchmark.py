@@ -86,6 +86,8 @@ class TrialResult:
     sampler_overrun_count: int
     ring_drop_count: int
     usb_stall_count: int
+    usb_host_backpressure_stall_count: int
+    usb_policy_deferral_count: int
     peak_ring_depth_packets: int
     throughput_mbps: float
     window_seconds: float
@@ -269,6 +271,8 @@ def collect_stream(config: BenchmarkConfig, marker: bytes, expected: bytes) -> T
             sampler_overrun_count=status.sampler_overrun_count,
             ring_drop_count=status.ring_drop_count,
             usb_stall_count=status.usb_stall_count,
+            usb_host_backpressure_stall_count=status.usb_host_backpressure_stall_count,
+            usb_policy_deferral_count=status.usb_policy_deferral_count,
             peak_ring_depth_packets=status.peak_ring_depth_packets,
             throughput_mbps=throughput_mbps,
             window_seconds=tx_seconds,
@@ -292,6 +296,8 @@ def collect_stream(config: BenchmarkConfig, marker: bytes, expected: bytes) -> T
         sampler_overrun_count=status.sampler_overrun_count,
         ring_drop_count=status.ring_drop_count,
         usb_stall_count=status.usb_stall_count,
+        usb_host_backpressure_stall_count=status.usb_host_backpressure_stall_count,
+        usb_policy_deferral_count=status.usb_policy_deferral_count,
         peak_ring_depth_packets=status.peak_ring_depth_packets,
         throughput_mbps=throughput_mbps,
         window_seconds=tx_seconds,
@@ -310,7 +316,8 @@ def format_trial(index: int, total_bytes: int, capture_mode: SpiCaptureMode, res
         f"window={result.window_seconds:.2f}s packets={result.packets_emitted} "
         f"overruns={result.overrun_count} sink={result.sink_overrun_count} "
         f"sampler={result.sampler_overrun_count} ring={result.ring_drop_count} "
-        f"stalls={result.usb_stall_count} peak={result.peak_ring_depth_packets}"
+        f"stalls={result.usb_stall_count} host_stalls={result.usb_host_backpressure_stall_count} "
+        f"policy_deferrals={result.usb_policy_deferral_count} peak={result.peak_ring_depth_packets}"
     )
 
 

@@ -187,7 +187,7 @@ That means the current implementation proves:
 - DMA fills alternating ping-pong buffers
 - oversampled ping-pong buffers are decoded into I2C events
 - partial packet state survives across DMA IRQs until a transaction ends or a packet fills
-- `usb_bulk_poll_stream()` can drain those decoded packets onto the vendor bulk interface when they are available
+- `usb_bulk_service_stream()` can drain those decoded packets onto the vendor bulk interface and flush them when they are available
 
 It still does not prove:
 

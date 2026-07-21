@@ -9,6 +9,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/** @brief Lightweight CDC observability counters for control-path debugging. */
+typedef struct {
+	uint32_t rx_dropped_bytes; /**< Bytes discarded before reaching the local receive queue. */
+	uint32_t tx_enqueue_failures; /**< Write requests that could not be queued for transmit. */
+} usb_cdc_stats_t;
+
 /** @brief Return whether the CDC interface is enumerated and the host is connected. */
 bool usb_cdc_is_connected(void);
 
@@ -30,5 +36,11 @@ bool usb_cdc_write(const uint8_t *data, uint32_t length);
 
 /** @brief Service the queued CDC transmit buffer. */
 void usb_cdc_poll_tx(void);
+
+/** @brief Return the current CDC observability counters. */
+usb_cdc_stats_t usb_cdc_get_stats(void);
+
+/** @brief Clear the CDC observability counters. */
+void usb_cdc_reset_stats(void);
 
 #endif

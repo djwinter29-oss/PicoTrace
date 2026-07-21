@@ -26,16 +26,25 @@ bool usb_bulk_write(const uint8_t *data, uint32_t length);
 uint32_t usb_bulk_stream_write(const uint8_t *data, uint32_t length);
 
 /**
- * @brief Drain queued trace packets onto the vendor bulk endpoint when streaming is enabled.
+ * @brief Service the vendor bulk trace stream, including any needed flush.
  * @param enabled Shared stream enable state.
  * @return `true` when one or more bytes were queued to TinyUSB during this poll.
  */
-bool usb_bulk_poll_stream(bool enabled);
+bool usb_bulk_service_stream(bool enabled);
 
 /** @brief Flush any pending vendor bulk bytes through TinyUSB. */
 void usb_bulk_flush(void);
 
 /** @brief Return the number of stalled trace-stream write attempts since boot. */
 uint32_t usb_bulk_stall_count(void);
+
+/** @brief Return the number of trace-stream stalls caused by no vendor write space since boot. */
+uint32_t usb_bulk_host_backpressure_stall_count(void);
+
+/** @brief Return the number of trace-stream writes that deferred bytes due to stream write policy since boot. */
+uint32_t usb_bulk_policy_deferral_count(void);
+
+/** @brief Return the number of stream bytes deferred by vendor packet-alignment policy since boot. */
+uint32_t usb_bulk_deferred_bytes_count(void);
 
 #endif

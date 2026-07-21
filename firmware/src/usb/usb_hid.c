@@ -3,35 +3,27 @@
 #include "tusb.h"
 
 #include <stddef.h>
-#include <string.h>
 
-#include "app_control.h"
-#include "config/i2c_monitor_config.h"
-#include "config/spi_monitor_config.h"
-#include "trace/capture/spi/spi_monitor_control.h"
-#include "trace/decode/i2c/i2c_decoder.h"
-#include "trace/capture/i2c/i2c_monitor_control.h"
+#include "device_control.h"
+#include <string.h>
 
 /** @brief Payload bytes required for the I2C set-rate request. */
 #define USB_HID_I2C_MONITOR_SET_PAYLOAD_BYTES 5u
-/** @brief Payload bytes returned for one I2C channel status snapshot. */
-#define USB_HID_I2C_MONITOR_STATUS_PAYLOAD_BYTES 18u
-/** @brief Bytes used per channel in the compact I2C all-status response. */
-#define USB_HID_I2C_MONITOR_ALL_STATUS_CHANNEL_BYTES 14u
-/** @brief Total payload bytes returned for the compact I2C all-status response. */
-#define USB_HID_I2C_MONITOR_ALL_STATUS_PAYLOAD_BYTES (I2C_MONITOR_CHANNEL_COUNT * USB_HID_I2C_MONITOR_ALL_STATUS_CHANNEL_BYTES)
 /** @brief Payload bytes required for the SPI set-config request. */
 #define USB_HID_SPI_MONITOR_SET_PAYLOAD_BYTES 8u
-/** @brief Payload bytes returned for one SPI bus status snapshot. */
-#define USB_HID_SPI_MONITOR_STATUS_PAYLOAD_BYTES 38u
-/** @brief Bytes used per channel in the compact SPI all-status response. */
-#define USB_HID_SPI_MONITOR_ALL_STATUS_CHANNEL_BYTES 10u
-/** @brief Total payload bytes returned for the compact SPI all-status response. */
-#define USB_HID_SPI_MONITOR_ALL_STATUS_PAYLOAD_BYTES (SPI_MONITOR_CHANNEL_COUNT * USB_HID_SPI_MONITOR_ALL_STATUS_CHANNEL_BYTES)
-/** @brief Fixed bytes used by the shared device status fields before the version string. */
-#define USB_HID_DEVICE_STATUS_FIXED_BYTES 2u
-/** @brief Maximum firmware version bytes returned in the shared device status payload. */
-#define USB_HID_DEVICE_STATUS_MAX_VERSION_BYTES ((USB_HID_REPORT_SIZE - 4u) - USB_HID_DEVICE_STATUS_FIXED_BYTES)
+
+/** @brief Function type used by the local HID opcode dispatcher. */
+typedef bool (*usb_hid_handler_fn_t)(usb_hid_command_t *response, const usb_hid_command_t *request);
+
+/** @brief One local HID opcode descriptor used for uniform dispatch and length checks. */
+typedef struct {
+    uint8_t opcode; /**< HID opcode handled by this descriptor. */
+    uint8_t min_payload_length; /**< Minimum request payload bytes required for the opcode. */
+    usb_hid_handler_fn_t handler; /**< Callback that prepares the response for the opcode. */
+} usb_hid_opcode_handler_t;
+
+static void usb_hid_set_response(const usb_hid_command_t *response);
+static void usb_hid_prepare_response(usb_hid_command_t *response, const usb_hid_command_t *request, usb_hid_status_t status);
 
 /** @brief Decode a 32-bit little-endian value from a HID payload buffer. */
 static uint32_t usb_hid_read_u32_le(const uint8_t *data) {
@@ -41,33 +33,67 @@ static uint32_t usb_hid_read_u32_le(const uint8_t *data) {
         (((uint32_t)data[3]) << 24u);
 }
 
-    /** @brief Encode a 32-bit little-endian value into a HID payload buffer. */
-static void usb_hid_write_u32_le(uint8_t *data, uint32_t value) {
-    data[0] = (uint8_t)(value & 0xFFu);
-    data[1] = (uint8_t)((value >> 8u) & 0xFFu);
-    data[2] = (uint8_t)((value >> 16u) & 0xFFu);
-    data[3] = (uint8_t)((value >> 24u) & 0xFFu);
+static bool usb_hid_handle_nop(usb_hid_command_t *response, const usb_hid_command_t *request) {
+    (void)response;
+    (void)request;
+    return true;
+}
+
+static bool usb_hid_handle_get_status(usb_hid_command_t *response, const usb_hid_command_t *request) {
+    (void)request;
+
+    response->payload_length = device_control_encode_device_status_payload(response->payload, sizeof(response->payload));
+    if (response->payload_length == 0u) {
+        response->status = USB_HID_STATUS_REJECTED;
+    }
+
+    return true;
+}
+
+static bool usb_hid_handle_stream_enable(usb_hid_command_t *response, const usb_hid_command_t *request) {
+    (void)response;
+    (void)request;
+    device_control_set_stream_enabled(true);
+    return true;
+}
+
+static bool usb_hid_handle_stream_disable(usb_hid_command_t *response, const usb_hid_command_t *request) {
+    (void)response;
+    (void)request;
+    device_control_set_stream_enabled(false);
+    return true;
+}
+
+static bool usb_hid_handle_led_on(usb_hid_command_t *response, const usb_hid_command_t *request) {
+    (void)response;
+    (void)request;
+    device_control_set_led(true);
+    return true;
+}
+
+static bool usb_hid_handle_led_off(usb_hid_command_t *response, const usb_hid_command_t *request) {
+    (void)response;
+    (void)request;
+    device_control_set_led(false);
+    return true;
+}
+
+static bool usb_hid_handle_reboot(usb_hid_command_t *response, const usb_hid_command_t *request) {
+    (void)response;
+    (void)request;
+    device_control_reboot();
+    return true;
 }
 
 /** @brief Apply one I2C monitor set-rate HID request. */
 static bool usb_hid_handle_i2c_monitor_set_rate(usb_hid_command_t *response, const usb_hid_command_t *request) {
-    i2c_monitor_rc_t result;
+    device_control_result_t result;
     uint32_t sample_hz;
 
-    if (request->payload_length < USB_HID_I2C_MONITOR_SET_PAYLOAD_BYTES) {
-        response->status = USB_HID_STATUS_BAD_LENGTH;
-        return false;
-    }
-
     sample_hz = usb_hid_read_u32_le(&request->payload[1]);
-    result = i2c_monitor_control_set_channel_sample_hz(request->payload[0], sample_hz);
-    if (result != I2C_MONITOR_RC_OK) {
-        if (result == I2C_MONITOR_RC_BUSY) {
-            response->status = USB_HID_STATUS_BUSY;
-        } else {
-            response->status = USB_HID_STATUS_REJECTED;
-        }
-        return false;
+    result = device_control_i2c_configure_channel(request->payload[0], sample_hz, NULL);
+    if (result != DEVICE_CONTROL_RESULT_OK) {
+        response->status = device_control_result_to_hid_status(result);
     }
 
     return true;
@@ -76,53 +102,47 @@ static bool usb_hid_handle_i2c_monitor_set_rate(usb_hid_command_t *response, con
 /** @brief Encode one I2C monitor status snapshot into a HID response payload. */
 static bool usb_hid_handle_i2c_monitor_get_status(usb_hid_command_t *response, const usb_hid_command_t *request) {
     i2c_monitor_channel_status_t status;
+    device_control_result_t result;
 
-    if (request->payload_length < 1u) {
-        response->status = USB_HID_STATUS_BAD_LENGTH;
-        return false;
+    result = device_control_i2c_read_channel_status(request->payload[0], &status);
+    if (result != DEVICE_CONTROL_RESULT_OK) {
+        response->status = device_control_result_to_hid_status(result);
+        response->payload_length = 0u;
+        return true;
     }
 
-    if (i2c_monitor_control_get_channel_status(request->payload[0], &status) != I2C_MONITOR_RC_OK) {
+    response->payload_length = device_control_encode_i2c_channel_status_payload(
+        request->payload[0],
+        &status,
+        response->payload,
+        sizeof(response->payload)
+    );
+    if (response->payload_length == 0u) {
         response->status = USB_HID_STATUS_REJECTED;
-    /** @brief Encode all I2C monitor status snapshots into a compact HID response payload. */
-        return false;
     }
 
-    response->payload_length = USB_HID_I2C_MONITOR_STATUS_PAYLOAD_BYTES;
-    response->payload[0] = request->payload[0];
-    response->payload[1] = status.initialized ? 1u : 0u;
-    response->payload[2] = status.running ? 1u : 0u;
-    response->payload[3] = status.overrun ? 1u : 0u;
-    usb_hid_write_u32_le(&response->payload[4], status.sample_hz);
-    usb_hid_write_u32_le(&response->payload[8], status.completed_buffers);
-    usb_hid_write_u32_le(&response->payload[12], status.overrun_count);
-    response->payload[16] = status.transition_pending ? 1u : 0u;
-    response->payload[17] = status.transition_reason;
     return true;
 }
 
 static bool usb_hid_handle_i2c_monitor_get_all_status(usb_hid_command_t *response) {
     i2c_monitor_channel_status_t status[I2C_MONITOR_CHANNEL_COUNT];
-    uint32_t channel;
+    device_control_result_t result;
 
-    if (i2c_monitor_control_get_all_status(status) != I2C_MONITOR_RC_OK) {
-        response->status = USB_HID_STATUS_REJECTED;
+    result = device_control_i2c_read_all_status(status);
+    if (result != DEVICE_CONTROL_RESULT_OK) {
+        response->status = device_control_result_to_hid_status(result);
         response->payload_length = 0u;
-        return false;
+        return true;
     }
 
-    response->payload_length = USB_HID_I2C_MONITOR_ALL_STATUS_PAYLOAD_BYTES;
-    for (channel = 0u; channel < I2C_MONITOR_CHANNEL_COUNT; ++channel) {
-        uint8_t *payload = &response->payload[channel * USB_HID_I2C_MONITOR_ALL_STATUS_CHANNEL_BYTES];
-
-        payload[0] = (uint8_t)channel;
-        payload[1] = status[channel].initialized ? 1u : 0u;
-        payload[2] = status[channel].running ? 1u : 0u;
-        payload[3] = status[channel].overrun ? 1u : 0u;
-        usb_hid_write_u32_le(&payload[4], status[channel].sample_hz);
-        usb_hid_write_u32_le(&payload[8], status[channel].overrun_count);
-        payload[12] = status[channel].transition_pending ? 1u : 0u;
-        payload[13] = status[channel].transition_reason;
+    response->payload_length = device_control_encode_i2c_all_status_payload(
+        status,
+        I2C_MONITOR_CHANNEL_COUNT,
+        response->payload,
+        sizeof(response->payload)
+    );
+    if (response->payload_length == 0u) {
+        response->status = USB_HID_STATUS_REJECTED;
     }
 
     return true;
@@ -131,25 +151,15 @@ static bool usb_hid_handle_i2c_monitor_get_all_status(usb_hid_command_t *respons
 /** @brief Apply one SPI monitor set-config HID request. */
 static bool usb_hid_handle_spi_monitor_set_config(usb_hid_command_t *response, const usb_hid_command_t *request) {
     spi_monitor_bus_config_t config;
-    spi_monitor_rc_t result;
-
-    if (request->payload_length < USB_HID_SPI_MONITOR_SET_PAYLOAD_BYTES) {
-        response->status = USB_HID_STATUS_BAD_LENGTH;
-        return false;
-    }
+    device_control_result_t result;
 
     config.capture = (spi_monitor_capture_t)request->payload[1];
     config.spi_mode = request->payload[2];
     config.channel_select_mask = request->payload[3];
     config.timeout_us = usb_hid_read_u32_le(&request->payload[4]);
-    result = spi_monitor_control_set_bus_config(request->payload[0], &config);
-    if (result != SPI_MONITOR_RC_OK) {
-        if (result == SPI_MONITOR_RC_BUSY) {
-            response->status = USB_HID_STATUS_BUSY;
-        } else {
-            response->status = USB_HID_STATUS_REJECTED;
-        }
-        return false;
+    result = device_control_spi_configure_bus(request->payload[0], &config, NULL);
+    if (result != DEVICE_CONTROL_RESULT_OK) {
+        response->status = device_control_result_to_hid_status(result);
     }
 
     return true;
@@ -158,59 +168,96 @@ static bool usb_hid_handle_spi_monitor_set_config(usb_hid_command_t *response, c
 /** @brief Encode one SPI monitor bus status snapshot into a HID response payload. */
 static bool usb_hid_handle_spi_monitor_get_status(usb_hid_command_t *response, const usb_hid_command_t *request) {
     spi_monitor_bus_status_t status;
+    device_control_result_t result;
 
-    if (request->payload_length < 1u) {
-        response->status = USB_HID_STATUS_BAD_LENGTH;
-        return false;
+    result = device_control_spi_read_bus_status(request->payload[0], &status);
+    if (result != DEVICE_CONTROL_RESULT_OK) {
+        response->status = device_control_result_to_hid_status(result);
+        response->payload_length = 0u;
+        return true;
     }
 
-    if (spi_monitor_control_get_bus_status(request->payload[0], &status) != SPI_MONITOR_RC_OK) {
+    response->payload_length = device_control_encode_spi_bus_status_payload(
+        request->payload[0],
+        &status,
+        response->payload,
+        sizeof(response->payload)
+    );
+    if (response->payload_length == 0u) {
         response->status = USB_HID_STATUS_REJECTED;
-        return false;
     }
 
-    response->payload_length = USB_HID_SPI_MONITOR_STATUS_PAYLOAD_BYTES;
-    response->payload[0] = request->payload[0];
-    response->payload[1] = status.initialized ? 1u : 0u;
-    response->payload[2] = status.running ? 1u : 0u;
-    response->payload[3] = (uint8_t)status.capture;
-    response->payload[4] = status.spi_mode;
-    response->payload[5] = status.channel_select_mask;
-    usb_hid_write_u32_le(&response->payload[6], status.timeout_us);
-    usb_hid_write_u32_le(&response->payload[10], status.packets_emitted);
-    usb_hid_write_u32_le(&response->payload[14], status.overrun_count);
-    usb_hid_write_u32_le(&response->payload[18], status.sink_overrun_count);
-    usb_hid_write_u32_le(&response->payload[22], status.sampler_overrun_count);
-    usb_hid_write_u32_le(&response->payload[26], status.ring_drop_count);
-    usb_hid_write_u32_le(&response->payload[30], status.usb_stall_count);
-    usb_hid_write_u32_le(&response->payload[34], status.peak_ring_depth_packets);
     return true;
 }
 
 static bool usb_hid_handle_spi_monitor_get_all_status(usb_hid_command_t *response) {
     spi_monitor_channel_status_t status[SPI_MONITOR_CHANNEL_COUNT];
-    uint32_t channel;
+    device_control_result_t result;
 
-    if (spi_monitor_control_get_all_status(status) != SPI_MONITOR_RC_OK) {
-        response->status = USB_HID_STATUS_REJECTED;
+    result = device_control_spi_read_all_status(status);
+    if (result != DEVICE_CONTROL_RESULT_OK) {
+        response->status = device_control_result_to_hid_status(result);
         response->payload_length = 0u;
-        return false;
+        return true;
     }
 
-    response->payload_length = USB_HID_SPI_MONITOR_ALL_STATUS_PAYLOAD_BYTES;
-    for (channel = 0u; channel < SPI_MONITOR_CHANNEL_COUNT; ++channel) {
-        uint8_t *payload = &response->payload[channel * USB_HID_SPI_MONITOR_ALL_STATUS_CHANNEL_BYTES];
-
-        payload[0] = (uint8_t)channel;
-        payload[1] = status[channel].initialized ? 1u : 0u;
-        payload[2] = status[channel].running ? 1u : 0u;
-        payload[3] = (uint8_t)status[channel].capture;
-        payload[4] = status[channel].spi_mode;
-        usb_hid_write_u32_le(&payload[5], status[channel].timeout_us);
-        payload[9] = (status[channel].overrun_count != 0u) ? 1u : 0u;
+    response->payload_length = device_control_encode_spi_all_status_payload(
+        status,
+        SPI_MONITOR_CHANNEL_COUNT,
+        response->payload,
+        sizeof(response->payload)
+    );
+    if (response->payload_length == 0u) {
+        response->status = USB_HID_STATUS_REJECTED;
     }
 
     return true;
+}
+
+static bool usb_hid_handle_i2c_monitor_get_all_status_request(usb_hid_command_t *response, const usb_hid_command_t *request) {
+    (void)request;
+    return usb_hid_handle_i2c_monitor_get_all_status(response);
+}
+
+static bool usb_hid_handle_spi_monitor_get_all_status_request(usb_hid_command_t *response, const usb_hid_command_t *request) {
+    (void)request;
+    return usb_hid_handle_spi_monitor_get_all_status(response);
+}
+
+static const usb_hid_opcode_handler_t usb_hid_opcode_handlers[] = {
+    {USB_HID_OPCODE_NOP, 0u, usb_hid_handle_nop},
+    {USB_HID_OPCODE_GET_STATUS, 0u, usb_hid_handle_get_status},
+    {USB_HID_OPCODE_STREAM_ENABLE, 0u, usb_hid_handle_stream_enable},
+    {USB_HID_OPCODE_STREAM_DISABLE, 0u, usb_hid_handle_stream_disable},
+    {USB_HID_OPCODE_I2C_MONITOR_SET_RATE, USB_HID_I2C_MONITOR_SET_PAYLOAD_BYTES, usb_hid_handle_i2c_monitor_set_rate},
+    {USB_HID_OPCODE_I2C_MONITOR_GET_STATUS, 1u, usb_hid_handle_i2c_monitor_get_status},
+    {USB_HID_OPCODE_I2C_MONITOR_GET_ALL_STATUS, 0u, usb_hid_handle_i2c_monitor_get_all_status_request},
+    {USB_HID_OPCODE_SPI_MONITOR_SET_CONFIG, USB_HID_SPI_MONITOR_SET_PAYLOAD_BYTES, usb_hid_handle_spi_monitor_set_config},
+    {USB_HID_OPCODE_SPI_MONITOR_GET_STATUS, 1u, usb_hid_handle_spi_monitor_get_status},
+    {USB_HID_OPCODE_SPI_MONITOR_GET_ALL_STATUS, 0u, usb_hid_handle_spi_monitor_get_all_status_request},
+    {USB_HID_OPCODE_LED_ON, 0u, usb_hid_handle_led_on},
+    {USB_HID_OPCODE_LED_OFF, 0u, usb_hid_handle_led_off},
+    {USB_HID_OPCODE_REBOOT, 0u, usb_hid_handle_reboot},
+};
+
+static bool usb_hid_dispatch_command(usb_hid_command_t *response, const usb_hid_command_t *request) {
+    for (uint32_t index = 0u; index < (sizeof(usb_hid_opcode_handlers) / sizeof(usb_hid_opcode_handlers[0])); ++index) {
+        const usb_hid_opcode_handler_t *handler = &usb_hid_opcode_handlers[index];
+
+        if (handler->opcode != request->opcode) {
+            continue;
+        }
+
+        if (request->payload_length < handler->min_payload_length) {
+            response->status = USB_HID_STATUS_BAD_LENGTH;
+            response->payload_length = 0u;
+            return true;
+        }
+
+        return handler->handler(response, request);
+    }
+
+    return false;
 }
 
 /** @brief Most recently received HID output report pending dispatch. */
@@ -221,20 +268,29 @@ static usb_hid_command_t hid_report_state;
 static bool hid_command_pending;
 /** @brief Indicates whether @ref hid_report_state holds a prepared response. */
 static bool hid_response_ready;
+/** @brief Lightweight observability counters for HID control-path behavior. */
+static usb_hid_stats_t usb_hid_stats;
 
-/** @copydoc usb_hid_take_command */
-bool usb_hid_take_command(usb_hid_command_t *command) {
-    if ((command == NULL) || !hid_command_pending) {
-        return false;
+/**
+ * @brief Stage a BUSY response for one incoming HID report without overwriting an older pending command.
+ * @param buffer Caller-owned raw HID report bytes.
+ * @param bufsize Number of bytes available in @p buffer.
+ */
+static void usb_hid_stage_busy_response(uint8_t const *buffer, uint16_t bufsize) {
+    usb_hid_command_t request = {0};
+    uint16_t copy_len = bufsize;
+
+    if (copy_len > sizeof(request)) {
+        copy_len = (uint16_t)sizeof(request);
     }
 
-    *command = hid_command_state;
-    hid_command_pending = false;
-    return true;
+    memcpy(&request, buffer, copy_len);
+    usb_hid_prepare_response(&hid_report_state, &request, USB_HID_STATUS_BUSY);
+    hid_response_ready = true;
 }
 
-/** @copydoc usb_hid_set_response */
-void usb_hid_set_response(const usb_hid_command_t *response) {
+/** @brief Publish one prepared HID response for the next input report read. */
+static void usb_hid_set_response(const usb_hid_command_t *response) {
     if (response == NULL) {
         return;
     }
@@ -243,8 +299,8 @@ void usb_hid_set_response(const usb_hid_command_t *response) {
     hid_response_ready = true;
 }
 
-/** @copydoc usb_hid_prepare_response */
-void usb_hid_prepare_response(usb_hid_command_t *response, const usb_hid_command_t *request, usb_hid_status_t status) {
+/** @brief Initialize one HID response from the request opcode, sequence, and status. */
+static void usb_hid_prepare_response(usb_hid_command_t *response, const usb_hid_command_t *request, usb_hid_status_t status) {
     memset(response, 0, sizeof(*response));
     response->opcode = request->opcode;
     response->sequence = request->sequence;
@@ -255,7 +311,7 @@ void usb_hid_prepare_response(usb_hid_command_t *response, const usb_hid_command
 void usb_hid_poll(void) {
     usb_hid_command_t response;
 
-    if (!hid_command_pending) {
+    if (!hid_command_pending || hid_response_ready) {
         return;
     }
 
@@ -263,62 +319,13 @@ void usb_hid_poll(void) {
 
     usb_hid_prepare_response(&response, &hid_command_state, USB_HID_STATUS_OK);
 
-    switch ((usb_hid_opcode_t)hid_command_state.opcode) {
-    case USB_HID_OPCODE_NOP:
-        break;
-    case USB_HID_OPCODE_GET_STATUS:
-    {
-        const char *firmware_version = app_control_firmware_version();
-        size_t version_length = strlen(firmware_version);
-
-        if (version_length > USB_HID_DEVICE_STATUS_MAX_VERSION_BYTES) {
-            version_length = USB_HID_DEVICE_STATUS_MAX_VERSION_BYTES;
-        }
-
-        response.payload_length = (uint8_t)(USB_HID_DEVICE_STATUS_FIXED_BYTES + version_length);
-        response.payload[0] = app_control_stream_enabled() ? 1u : 0u;
-        response.payload[1] = (uint8_t)version_length;
-        memcpy(&response.payload[2], firmware_version, version_length);
-        break;
-    }
-    case USB_HID_OPCODE_STREAM_ENABLE:
-        app_control_set_stream_enabled(true);
-        break;
-    case USB_HID_OPCODE_STREAM_DISABLE:
-        app_control_set_stream_enabled(false);
-        break;
-    case USB_HID_OPCODE_I2C_MONITOR_SET_RATE:
-        (void)usb_hid_handle_i2c_monitor_set_rate(&response, &hid_command_state);
-        break;
-    case USB_HID_OPCODE_I2C_MONITOR_GET_STATUS:
-        (void)usb_hid_handle_i2c_monitor_get_status(&response, &hid_command_state);
-        break;
-    case USB_HID_OPCODE_I2C_MONITOR_GET_ALL_STATUS:
-        (void)usb_hid_handle_i2c_monitor_get_all_status(&response);
-        break;
-    case USB_HID_OPCODE_SPI_MONITOR_SET_CONFIG:
-        (void)usb_hid_handle_spi_monitor_set_config(&response, &hid_command_state);
-        break;
-    case USB_HID_OPCODE_SPI_MONITOR_GET_STATUS:
-        (void)usb_hid_handle_spi_monitor_get_status(&response, &hid_command_state);
-        break;
-    case USB_HID_OPCODE_SPI_MONITOR_GET_ALL_STATUS:
-        (void)usb_hid_handle_spi_monitor_get_all_status(&response);
-        break;
-    case USB_HID_OPCODE_LED_ON:
-        app_control_set_led(true);
-        break;
-    case USB_HID_OPCODE_LED_OFF:
-        app_control_set_led(false);
-        break;
-    case USB_HID_OPCODE_REBOOT:
-        app_control_reboot();
-        break;
-    default:
-        response.status = USB_HID_STATUS_UNKNOWN_COMMAND;
-        break;
+    if (usb_hid_dispatch_command(&response, &hid_command_state)) {
+        usb_hid_set_response(&response);
+        return;
     }
 
+    usb_hid_stats.unknown_opcodes += 1u;
+    response.status = USB_HID_STATUS_UNKNOWN_COMMAND;
     usb_hid_set_response(&response);
 }
 
@@ -339,8 +346,8 @@ uint16_t tud_hid_get_report_cb(
         copy_len = (uint16_t)sizeof(hid_report_state);
     }
 
-    (void)hid_response_ready;
     memcpy(buffer, &hid_report_state, copy_len);
+    hid_response_ready = false;
     return copy_len;
 }
 
@@ -361,7 +368,33 @@ void tud_hid_set_report_cb(
         copy_len = (uint16_t)sizeof(hid_report_state);
     }
 
+    /* ponytail: HID control currently keeps exactly one staged command and one staged response.
+     * That is acceptable now because host control traffic is bounded and the main loop services HID
+     * every pass. If host burst depth becomes a real problem, replace this backpressure rule with a
+     * small request/response ring so additional reports are queued instead of rejected.
+     */
+    if (hid_command_pending) {
+        usb_hid_stats.busy_rejects += 1u;
+        if (!hid_response_ready) {
+            usb_hid_stage_busy_response(buffer, copy_len);
+        }
+        return;
+    }
+
+    if (hid_response_ready) {
+        usb_hid_stats.busy_rejects += 1u;
+        return;
+    }
+
     memset(&hid_command_state, 0, sizeof(hid_command_state));
     memcpy(&hid_command_state, buffer, copy_len);
     hid_command_pending = true;
+}
+
+usb_hid_stats_t usb_hid_get_stats(void) {
+    return usb_hid_stats;
+}
+
+void usb_hid_reset_stats(void) {
+    memset(&usb_hid_stats, 0, sizeof(usb_hid_stats));
 }
