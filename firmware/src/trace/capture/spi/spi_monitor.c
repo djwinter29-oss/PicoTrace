@@ -31,7 +31,7 @@
 #define SPI_MONITOR_DMA_RING_BYTES (SPI_MONITOR_DMA_RING_WORDS * sizeof(uint32_t))
 #define SPI_MONITOR_DMA_RING_BITS 8u
 #define SPI_MONITOR_SAMPLES_PER_WORD 8u
-#define SPI_MONITOR_BOUNDARY_QUEUE_LENGTH (SPI_MONITOR_DMA_RING_WORDS + 1u)
+#define SPI_MONITOR_RING_SATURATION_FREE_SLOTS 1u
 
 typedef char spi_monitor_dma_ring_size_must_match[
     (SPI_MONITOR_DMA_RING_BYTES == (1u << SPI_MONITOR_DMA_RING_BITS)) ? 1 : -1
@@ -81,6 +81,7 @@ typedef struct {
 /** @brief Transaction decode state owned by one logical SPI channel. */
 typedef struct {
     bool transaction_open; /**< Indicates whether one logical SPI transaction is currently open on this channel. */
+    bool timeout_close_armed; /**< Indicates whether one prior idle timeout poll already observed this transaction stale without new DMA progress. */
     uint32_t transaction_timestamp_us; /**< Timestamp captured when the current logical transaction opened. */
     uint32_t last_activity_timestamp_us; /**< Timestamp of the most recently processed buffer attributed to this transaction. */
     spi_monitor_packet_builder_t packet_builder; /**< Fixed-packet builder that owns the active channel transaction fragment. */
@@ -103,11 +104,9 @@ typedef struct {
     uint32_t write_offset_words; /**< Most recently observed DMA write offset within the ping-pong ring. */
     uint32_t last_transfer_count; /**< Most recently observed DMA transfer count snapshot. */
     uint32_t overrun_count; /**< Number of completed half-buffers overwritten before service. */
-    uint8_t boundary_head; /**< Next queued CS boundary offset to consume. */
-    uint8_t boundary_tail; /**< Next free slot in the queued CS boundary ring. */
-    uint8_t boundary_count; /**< Number of queued CS boundary offsets. */
-    uint8_t reserved0; /**< Reserved padding to keep the structure compact. */
-    uint8_t boundary_offsets[SPI_MONITOR_BOUNDARY_QUEUE_LENGTH]; /**< Queued DMA write offsets recorded at CS deassert. */
+    bool boundary_pending; /**< Indicates whether one exact CS boundary offset is waiting to split the current DMA span. */
+    uint8_t boundary_offset; /**< Pending DMA write offset recorded at CS deassert when @ref boundary_pending is set. */
+    uint16_t reserved0; /**< Reserved padding to keep the structure compact. */
 } spi_monitor_channel_sampler_state_t;
 
 /** @brief Logical channel identifiers exported on the shared trace packet header. */
@@ -389,6 +388,23 @@ static void spi_monitor_packet_builder_mark_next(spi_monitor_packet_builder_t *b
     builder->pending_flags |= flags;
 }
 
+/** @brief Mark the current transaction as overflowed and count the transition only once until the next fragment opens. */
+static void spi_monitor_packet_builder_note_overflow(
+    spi_monitor_packet_builder_t *builder,
+    spi_monitor_channel_state_t *channel_state
+) {
+    if ((builder->pending_flags & TRACE_FLAG_OVERFLOW) == 0u) {
+        channel_state->sink_overrun_count += 1u;
+    }
+
+    spi_monitor_packet_builder_mark_next(builder, TRACE_FLAG_OVERFLOW);
+}
+
+/** @brief Return whether the shared trace ring is already saturated enough to avoid opening another continuation fragment. */
+static bool spi_monitor_packet_builder_should_back_off(const spi_monitor_packet_builder_t *builder) {
+    return builder->transaction_fragmented && (trace_ring_free() <= SPI_MONITOR_RING_SATURATION_FREE_SLOTS);
+}
+
 /** @brief Open a new fixed SPI trace packet fragment for one logical channel. */
 static void spi_monitor_packet_builder_begin(
     spi_monitor_packet_builder_t *builder,
@@ -436,10 +452,9 @@ static bool spi_monitor_packet_builder_flush(
     }
     builder->packet.header.payload_len = (uint16_t)builder->payload_offset;
     if (!spi_monitor_push_trace_packet(&builder->packet)) {
-        channel_state->sink_overrun_count += 1u;
         spi_monitor_packet_builder_drop_open_packet(builder);
         builder->transaction_fragmented = true;
-        spi_monitor_packet_builder_mark_next(builder, TRACE_FLAG_OVERFLOW);
+        spi_monitor_packet_builder_note_overflow(builder, channel_state);
         return false;
     }
 
@@ -457,7 +472,7 @@ static bool spi_monitor_packet_builder_flush(
 }
 
 /** @brief Ensure the current SPI fragment is open and has room for the requested payload bytes. */
-static void spi_monitor_packet_builder_ensure_room(
+static bool spi_monitor_packet_builder_ensure_room(
     uint32_t bus,
     spi_monitor_packet_builder_t *builder,
     spi_monitor_channel_state_t *channel_state,
@@ -466,100 +481,116 @@ static void spi_monitor_packet_builder_ensure_room(
     uint32_t transaction_timestamp_us,
     uint16_t bytes_needed
 ) {
+    (void)bus;
+
     if (!builder->packet_open) {
+        if (spi_monitor_packet_builder_should_back_off(builder)) {
+            spi_monitor_packet_builder_note_overflow(builder, channel_state);
+            return false;
+        }
         spi_monitor_packet_builder_begin(builder, channel_state, capture, logical_channel, transaction_timestamp_us);
     }
 
     if ((builder->payload_offset + bytes_needed) > TRACE_PACKET_PAYLOAD_BYTES) {
-        (void)spi_monitor_packet_builder_flush(bus, builder, channel_state, 0u, false);
+        if (!spi_monitor_packet_builder_flush(bus, builder, channel_state, 0u, false)) {
+            return false;
+        }
+
+        if (spi_monitor_packet_builder_should_back_off(builder)) {
+            spi_monitor_packet_builder_note_overflow(builder, channel_state);
+            return false;
+        }
+
         spi_monitor_packet_builder_begin(builder, channel_state, capture, logical_channel, transaction_timestamp_us);
     }
 
+    return true;
 }
 
-/** @brief Append MOSI-only bytes in chunked fragments to reduce per-word packet bookkeeping. */
-static void spi_monitor_channel_append_mosi_words(
-    uint32_t bus,
+/** @brief Append one contiguous MOSI-only chunk without branching on capture mode in the inner loop. */
+static void spi_monitor_append_mosi_words_chunk(
     spi_monitor_packet_builder_t *builder,
-    spi_monitor_channel_state_t *channel_state,
-    uint8_t logical_channel,
-    uint32_t transaction_timestamp_us,
     const uint32_t *raw_words,
-    uint32_t raw_word_count
+    uint32_t *word_index,
+    uint32_t chunk_words
 ) {
-    uint32_t word_index = 0u;
+    uint32_t chunk_end = *word_index + chunk_words;
 
-    while (word_index < raw_word_count) {
-        uint32_t chunk_words;
-        uint32_t available_words;
-
-        spi_monitor_packet_builder_ensure_room(
-            bus,
-            builder,
-            channel_state,
-            SPI_MONITOR_CAPTURE_MOSI,
-            logical_channel,
-            transaction_timestamp_us,
-            1u
-        );
-
-        available_words = TRACE_PACKET_PAYLOAD_BYTES - builder->payload_offset;
-        chunk_words = raw_word_count - word_index;
-        if (chunk_words > available_words) {
-            chunk_words = available_words;
-        }
-
-        for (uint32_t chunk_index = 0u; chunk_index < chunk_words; ++chunk_index) {
-            builder->packet.payload[builder->payload_offset++] = spi_monitor_extract_mosi_only_byte(raw_words[word_index++]);
-        }
-
-        if ((builder->payload_offset == TRACE_PACKET_PAYLOAD_BYTES) && (word_index < raw_word_count)) {
-            (void)spi_monitor_packet_builder_flush(bus, builder, channel_state, 0u, false);
-        }
+    while (*word_index < chunk_end) {
+        builder->packet.payload[builder->payload_offset++] = spi_monitor_extract_mosi_only_byte(raw_words[*word_index]);
+        *word_index += 1u;
     }
 }
 
-/** @brief Append MOSI+MISO byte pairs in chunked fragments to reduce per-word packet bookkeeping. */
-static void spi_monitor_channel_append_mosi_miso_words(
+/** @brief Append one contiguous MOSI+MISO chunk without branching on capture mode in the inner loop. */
+static void spi_monitor_append_mosi_miso_words_chunk(
+    spi_monitor_packet_builder_t *builder,
+    const uint32_t *raw_words,
+    uint32_t *word_index,
+    uint32_t chunk_words
+) {
+    uint32_t chunk_end = *word_index + chunk_words;
+
+    while (*word_index < chunk_end) {
+        uint32_t packed_samples = raw_words[*word_index];
+
+        builder->packet.payload[builder->payload_offset++] = spi_monitor_extract_mosi_byte(packed_samples);
+        builder->packet.payload[builder->payload_offset++] = spi_monitor_extract_miso_byte(packed_samples);
+        *word_index += 1u;
+    }
+}
+
+/** @brief Append one contiguous span of SPI words in chunked fragments to reduce per-word packet bookkeeping. */
+static void spi_monitor_channel_append_words(
     uint32_t bus,
     spi_monitor_packet_builder_t *builder,
     spi_monitor_channel_state_t *channel_state,
     uint8_t logical_channel,
     uint32_t transaction_timestamp_us,
+    spi_monitor_capture_t capture,
     const uint32_t *raw_words,
     uint32_t raw_word_count
 ) {
+    void (*append_chunk)(spi_monitor_packet_builder_t *, const uint32_t *, uint32_t *, uint32_t);
     uint32_t word_index = 0u;
+    uint16_t bytes_per_word;
+
+    if (capture == SPI_MONITOR_CAPTURE_MOSI_MISO) {
+        bytes_per_word = 2u;
+        append_chunk = spi_monitor_append_mosi_miso_words_chunk;
+    } else {
+        bytes_per_word = 1u;
+        append_chunk = spi_monitor_append_mosi_words_chunk;
+    }
 
     while (word_index < raw_word_count) {
         uint32_t chunk_words;
         uint32_t available_words;
 
-        spi_monitor_packet_builder_ensure_room(
+        if (!spi_monitor_packet_builder_ensure_room(
             bus,
             builder,
             channel_state,
-            SPI_MONITOR_CAPTURE_MOSI_MISO,
+            capture,
             logical_channel,
             transaction_timestamp_us,
-            2u
-        );
+            bytes_per_word
+        )) {
+            break;
+        }
 
-        available_words = (TRACE_PACKET_PAYLOAD_BYTES - builder->payload_offset) / 2u;
+        available_words = (TRACE_PACKET_PAYLOAD_BYTES - builder->payload_offset) / bytes_per_word;
         chunk_words = raw_word_count - word_index;
         if (chunk_words > available_words) {
             chunk_words = available_words;
         }
 
-        for (uint32_t chunk_index = 0u; chunk_index < chunk_words; ++chunk_index) {
-            uint32_t packed_samples = raw_words[word_index++];
-
-            builder->packet.payload[builder->payload_offset++] = spi_monitor_extract_mosi_byte(packed_samples);
-            builder->packet.payload[builder->payload_offset++] = spi_monitor_extract_miso_byte(packed_samples);
-        }
+        append_chunk(builder, raw_words, &word_index, chunk_words);
 
         if ((builder->payload_offset == TRACE_PACKET_PAYLOAD_BYTES) && (word_index < raw_word_count)) {
-            (void)spi_monitor_packet_builder_flush(bus, builder, channel_state, 0u, false);
+            if (!spi_monitor_packet_builder_flush(bus, builder, channel_state, 0u, false)) {
+                break;
+            }
         }
     }
 }
@@ -601,11 +632,13 @@ static void spi_monitor_open_channel_transaction(uint32_t channel, uint32_t time
     spi_monitor_channel_runtime_t *channel_runtime = &g_spi_monitor_channel_runtimes[channel];
 
     if (channel_runtime->transaction_open) {
+        channel_runtime->timeout_close_armed = false;
         channel_runtime->last_activity_timestamp_us = timestamp_us;
         return;
     }
 
     channel_runtime->transaction_open = true;
+    channel_runtime->timeout_close_armed = false;
     channel_runtime->transaction_timestamp_us = timestamp_us;
     channel_runtime->last_activity_timestamp_us = timestamp_us;
 }
@@ -700,9 +733,8 @@ static uint32_t spi_monitor_snapshot_channel_dma_write_offset(const spi_monitor_
 
 /** @brief Clear the queued CS boundary offsets for one sampler. */
 static void spi_monitor_reset_channel_boundary_queue(spi_monitor_channel_sampler_state_t *sampler_state) {
-    sampler_state->boundary_head = 0u;
-    sampler_state->boundary_tail = 0u;
-    sampler_state->boundary_count = 0u;
+    sampler_state->boundary_pending = false;
+    sampler_state->boundary_offset = 0u;
 }
 
 /** @brief Queue one exact CS boundary offset for a running sampler. */
@@ -714,22 +746,24 @@ static void spi_monitor_enqueue_channel_boundary(uint32_t sampler, uint32_t boun
         return;
     }
 
-    if (sampler_state->boundary_count != 0u) {
-        uint8_t previous_index = (uint8_t)((sampler_state->boundary_tail + SPI_MONITOR_BOUNDARY_QUEUE_LENGTH - 1u) % SPI_MONITOR_BOUNDARY_QUEUE_LENGTH);
+    if (sampler_state->boundary_pending) {
+        uint32_t current_distance;
+        uint32_t new_distance;
 
-        if (sampler_state->boundary_offsets[previous_index] == boundary_offset) {
+        if (sampler_state->boundary_offset == boundary_offset) {
             return;
         }
-    }
 
-    if (sampler_state->boundary_count >= SPI_MONITOR_DMA_RING_WORDS) {
-        sampler_state->overrun_count += 1u;
+        current_distance = (sampler_state->boundary_offset + SPI_MONITOR_DMA_RING_WORDS - sampler_state->read_offset_words) % SPI_MONITOR_DMA_RING_WORDS;
+        new_distance = (boundary_offset + SPI_MONITOR_DMA_RING_WORDS - sampler_state->read_offset_words) % SPI_MONITOR_DMA_RING_WORDS;
+        if (new_distance < current_distance) {
+            sampler_state->boundary_offset = boundary_offset;
+        }
         return;
     }
 
-    sampler_state->boundary_offsets[sampler_state->boundary_tail] = boundary_offset;
-    sampler_state->boundary_tail = (uint8_t)((sampler_state->boundary_tail + 1u) % SPI_MONITOR_BOUNDARY_QUEUE_LENGTH);
-    sampler_state->boundary_count += 1u;
+    sampler_state->boundary_pending = true;
+    sampler_state->boundary_offset = boundary_offset;
 }
 
 /** @brief Return the next queued CS boundary that falls within one contiguous DMA span. */
@@ -739,29 +773,25 @@ static bool spi_monitor_next_channel_boundary_in_span(
     uint32_t span_end,
     uint32_t *boundary_offset
 ) {
-    uint32_t next_boundary;
-
-    if ((sampler_state->boundary_count == 0u) || (boundary_offset == NULL)) {
+    if (!sampler_state->boundary_pending || (boundary_offset == NULL)) {
         return false;
     }
 
-    next_boundary = sampler_state->boundary_offsets[sampler_state->boundary_head];
-    if ((next_boundary < span_start) || (next_boundary > span_end)) {
+    if ((sampler_state->boundary_offset < span_start) || (sampler_state->boundary_offset > span_end)) {
         return false;
     }
 
-    *boundary_offset = next_boundary;
+    *boundary_offset = sampler_state->boundary_offset;
     return true;
 }
 
 /** @brief Consume the next queued CS boundary after its transaction close has been applied. */
 static void spi_monitor_pop_channel_boundary(spi_monitor_channel_sampler_state_t *sampler_state) {
-    if (sampler_state->boundary_count == 0u) {
+    if (!sampler_state->boundary_pending) {
         return;
     }
 
-    sampler_state->boundary_head = (uint8_t)((sampler_state->boundary_head + 1u) % SPI_MONITOR_BOUNDARY_QUEUE_LENGTH);
-    sampler_state->boundary_count -= 1u;
+    sampler_state->boundary_pending = false;
 }
 
 /** @brief Latch the current DMA write position as a transaction boundary for one running sampler. */
@@ -818,28 +848,18 @@ static void spi_monitor_internal_process_channel_words(
     }
 
     transaction_timestamp_us = channel_runtime->transaction_timestamp_us;
+    channel_runtime->timeout_close_armed = false;
 
-    if (capture == SPI_MONITOR_CAPTURE_MOSI_MISO) {
-        spi_monitor_channel_append_mosi_miso_words(
-            bus,
-            builder,
-            channel_state,
-            logical_channel,
-            transaction_timestamp_us,
-            raw_words,
-            raw_word_count
-        );
-    } else {
-        spi_monitor_channel_append_mosi_words(
-            bus,
-            builder,
-            channel_state,
-            logical_channel,
-            transaction_timestamp_us,
-            raw_words,
-            raw_word_count
-        );
-    }
+    spi_monitor_channel_append_words(
+        bus,
+        builder,
+        channel_state,
+        logical_channel,
+        transaction_timestamp_us,
+        capture,
+        raw_words,
+        raw_word_count
+    );
 
     channel_runtime->last_activity_timestamp_us = timestamp_us;
 }
@@ -865,6 +885,11 @@ void spi_monitor_internal_poll_bus_timeout(uint32_t bus, uint32_t now_us) {
 
         elapsed_us = (int32_t)(now_us - channel_runtime->last_activity_timestamp_us);
         if ((elapsed_us >= 0) && ((uint32_t)elapsed_us >= timeout_us)) {
+            if (!channel_runtime->timeout_close_armed) {
+                channel_runtime->timeout_close_armed = true;
+                continue;
+            }
+
             g_spi_monitor_buses[bus].timeout_close_count += 1u;
             spi_monitor_close_channel_transaction(channel, 0u);
         }
@@ -1180,6 +1205,22 @@ static void spi_monitor_consume_channel_sampler_words(uint32_t sampler, uint32_t
     }
 }
 
+/** @brief Close a transaction immediately when a latched CS boundary sits at the current DMA read position. */
+static void spi_monitor_close_channel_sampler_at_idle_boundary(uint32_t sampler) {
+    spi_monitor_channel_sampler_state_t *sampler_state = &g_spi_monitor_channel_samplers[sampler];
+
+    if (!sampler_state->boundary_pending) {
+        return;
+    }
+
+    if (sampler_state->boundary_offset != sampler_state->read_offset_words) {
+        return;
+    }
+
+    spi_monitor_close_channel_transaction(sampler, 0u);
+    spi_monitor_pop_channel_boundary(sampler_state);
+}
+
 /** @brief Service DMA progress for one running logical SPI channel sampler. */
 static bool spi_monitor_poll_channel_sampler(uint32_t sampler) {
     spi_monitor_channel_sampler_state_t *sampler_state = &g_spi_monitor_channel_samplers[sampler];
@@ -1198,6 +1239,7 @@ static bool spi_monitor_poll_channel_sampler(uint32_t sampler) {
     words_written = sampler_state->last_transfer_count - transfer_count;
     if (words_written == 0u) {
         restore_interrupts(irq_state);
+        spi_monitor_close_channel_sampler_at_idle_boundary(sampler);
         return false;
     }
 
@@ -1222,6 +1264,7 @@ static bool spi_monitor_poll_channel_sampler(uint32_t sampler) {
     }
 
     sampler_state->read_offset_words = offset;
+    spi_monitor_close_channel_sampler_at_idle_boundary(sampler);
     return true;
 }
 

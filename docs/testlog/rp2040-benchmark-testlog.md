@@ -6,6 +6,151 @@ Add new entries here after firmware-affecting test runs.
 
 Use [rp2040-benchmark-testlog-template.md](rp2040-benchmark-testlog-template.md) for the entry format.
 
+## 2026-07-21 - 250 MHz SPI And I2C Benchmark Rerun
+
+### Scope
+
+- board: Raspberry Pi Pico (`RP2040`)
+- firmware clock: `250 MHz`
+- firmware/build: `build/firmware-pico-250m`
+- reason: rerun the standard `250 MHz` SPI benchmark sweeps and I2C trace bracket on the current firmware image
+
+### Commands
+
+- `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico-250m --skip-build`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi --speed-hz 15500000 16000000 16500000 17000000 17500000 18000000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi-miso --speed-hz 5600000 5700000 5750000 5800000 5900000 6000000 --trials 3`
+- `for hz in 4000000 10000000 11000000 12000000; do ./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz "$hz" --expect-transactions 112; done`
+
+### Results
+
+- MOSI: `15.5/16.0/16.5/17.0/17.5 MHz` all passed `3/3`; `18.0 MHz` failed `0/3`. Failing trials stayed downstream-limited with `sink>0 sampler=0 ring=0 peak=252`.
+- MOSI+MISO: `5.6 MHz` passed `3/3`; `5.7 MHz` passed `2/3`; `5.75 MHz` passed `1/3`; `5.8 MHz` passed `1/3`; `5.9 MHz` passed `1/3`; `6.0 MHz` passed `2/3`. Failing trials stayed downstream-limited with `sink>0 sampler=0 ring=0 peak=252`.
+- I2C smoke: `4.0 MHz` stayed healthy with `transactions=112 starts=112 stops=112 overruns=0 sticky=0`.
+- I2C sample-hz notes: `10.0 MHz`, `11.0 MHz`, and `12.0 MHz` all stayed healthy on the standard `i2cdetect -y 1` workload with `transactions=112 starts=112 stops=112 overruns=0 sticky=0`.
+
+### Interpretation
+
+- MOSI-only SPI matches the current published `250 MHz` baseline on this rerun: `17.5 MHz` stayed the highest clean point and `18.0 MHz` stayed unstable.
+- MOSI+MISO SPI is still materially worse than the current published baseline on this bench because the baseline clean range through `5.8 MHz` did not hold in this rerun.
+- I2C remains stronger than the current published `250 MHz` baseline on the standard smoke workload because the prior unstable bracket at `11-12 MHz` stayed healthy again.
+- The SPI failures remained downstream-limited rather than sampler-limited.
+
+### Baseline Impact
+
+- `docs/testlog/rp2040-benchmark-baseline.md` updated: no
+- reason: this rerun still shows mixed movement versus the current baseline, and the workflow says to leave the stable baseline unchanged unless explicitly requested.
+
+## 2026-07-21 - SPI Producer Follow-Up
+
+### Scope
+
+- board: Raspberry Pi Pico (`RP2040`)
+- firmware clock: `250 MHz`
+- firmware/build: `build/firmware-pico-250m`
+- reason: validate the SPI producer follow-up changes that split the hot append kernels, require one idle stale poll before timeout close, add an early saturation backoff, and keep single-slot boundary handling deterministic
+
+### Commands
+
+- `cmake --build build/tests --target usb_app_test && ./build/tests/usb_app_test`
+- `./tools/linux/build.sh --board pico --firmware-build-dir build/firmware-pico-250m --system-clock-khz 250000`
+- `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico-250m --skip-build`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi --speed-hz 17500000 18000000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi-miso --speed-hz 5800000 5900000 --trials 3`
+- `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
+
+### Results
+
+- hosted tests: `usb_app_test` passed with the new timeout-policy and saturation-guard coverage updates.
+- MOSI: `17.5 MHz` passed `3/3`, and `18.0 MHz` also passed `3/3` with `sink=0 sampler=0 ring=0`.
+- MOSI+MISO: `5.8 MHz` passed `3/3` with `sink=0 sampler=0 ring=0`; `5.9 MHz` improved to `2/3`, and the single failing trial reported downstream pressure with `sink=171 sampler=0 ring=0 peak=252`.
+- I2C smoke: the standard `4.0 MHz` `i2cdetect -y 1` trace stayed healthy with `transactions=112 starts=112 stops=112 overruns=0 sticky=0`.
+- counter notes: the early saturation guard no longer inflates sink-overrun counts per dropped continuation attempt; failing SPI trials now report bounded overflow counts instead of per-word spikes.
+
+### Interpretation
+
+- Splitting the MOSI and MOSI+MISO inner append kernels removed hot-loop branching without reopening the duplicated higher-level append control path.
+- Requiring one idle stale poll before timeout close reduced premature timeout-driven fragmentation, and the focused SPI rerun improved on this bench rather than regressing.
+- The early saturation guard now behaves as intended: it avoids wasting producer work when the ring is near full while still keeping overflow accounting honest.
+- The SPI-focused firmware changes did not disturb the baseline I2C smoke path.
+
+### Baseline Impact
+
+- `docs/testlog/rp2040-benchmark-baseline.md` updated: no
+- reason: the measured SPI edge improved versus the current published baseline, but the workflow says to leave the stable baseline unchanged unless explicitly requested.
+
+## 2026-07-21 - SPI And I2C Benchmark Rerun
+
+### Scope
+
+- board: Raspberry Pi Pico (`RP2040`)
+- firmware clock: `250 MHz`
+- firmware/build: `build/firmware-pico-250m`
+- reason: rerun the standard SPI benchmark sweeps and I2C trace bracket on the current firmware image
+
+### Commands
+
+- `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico-250m --skip-build`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi --speed-hz 15500000 16000000 16500000 17000000 17500000 18000000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi-miso --speed-hz 5600000 5700000 5800000 5900000 --trials 3`
+- `for hz in 4000000 10000000 11000000 12000000; do ./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz "$hz" --expect-transactions 112; done`
+
+### Results
+
+- MOSI: `15.5/16.0/16.5/17.0/17.5 MHz` all passed `3/3`; `18.0 MHz` failed `0/3` with downstream-limited loss (`sink>0 sampler=0 ring>0 peak=256`).
+- MOSI+MISO: `5.6 MHz` passed `1/3`, `5.7 MHz` passed `1/3`, `5.8 MHz` passed `2/3`, and `5.9 MHz` passed `1/3`; every failing trial was downstream-limited (`sink>0 sampler=0 ring>0 peak=256`).
+- I2C smoke: `4.0 MHz` stayed healthy with `transactions=112 starts=112 stops=112 overruns=0 sticky=0`.
+- I2C sample-hz notes: `10.0 MHz`, `11.0 MHz`, and `12.0 MHz` all stayed healthy on the standard `i2cdetect -y 1` workload with `transactions=112 starts=112 stops=112 overruns=0 sticky=0`.
+
+### Interpretation
+
+- MOSI-only SPI matches the current published `250 MHz` baseline: `17.5 MHz` remains the highest clean point and `18.0 MHz` remains the first unstable point.
+- MOSI+MISO SPI is materially worse than the current published baseline on this bench, because the expected clean range through `5.8 MHz` did not hold in this rerun.
+- I2C is stronger than the current published `250 MHz` baseline on the standard smoke workload, because the prior unstable bracket at `11-12 MHz` stayed healthy in this rerun.
+- The SPI failures remained downstream-limited rather than sampler-limited.
+
+### Baseline Impact
+
+- `docs/testlog/rp2040-benchmark-baseline.md` updated: no
+- reason: this rerun produced mixed movement versus the current baseline, and the workflow says to leave the baseline unchanged unless explicitly requested.
+
+## 2026-07-21 - SPI Simplification Follow-Up
+
+### Scope
+
+- board: Raspberry Pi Pico (`RP2040`)
+- firmware clock: `250 MHz`
+- firmware/build: `build/firmware-pico-250m`
+- reason: validate the SPI append-path, boundary-state, and flush-policy simplification work on real hardware and confirm the standard I2C smoke path still stays healthy
+
+### Commands
+
+- `cmake --build build/tests --target usb_app_test && ./build/tests/usb_app_test`
+- `./tools/linux/build.sh --board pico --firmware-build-dir build/firmware-pico-250m --system-clock-khz 250000`
+- `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico-250m --skip-build`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi --speed-hz 17500000 18000000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi-miso --speed-hz 5800000 5900000 --trials 3`
+- `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
+
+### Results
+
+- hosted tests: `usb_app_test` passed after updating the overflow regression for the new continuation-fragment policy.
+- MOSI: `17.5 MHz` fell to `2/3`; the failing trial was downstream-limited with `sink=2 sampler=0 ring=2 peak=256`. `18.0 MHz` remained unstable at `0/3` with heavier downstream-limited loss.
+- MOSI+MISO: `5.8 MHz` fell to `1/3`; both failing trials were downstream-limited with `sink>0 sampler=0 ring>0 peak=256`. `5.9 MHz` remained unstable at `0/3`.
+- I2C smoke: the standard `4.0 MHz` `i2cdetect -y 1` trace stayed healthy with `transactions=112 starts=112 stops=112 overruns=0 sticky=0`.
+- I2C sample-hz notes: this follow-up only reran the conservative smoke point because the code change was isolated to the SPI path.
+
+### Interpretation
+
+- The SPI producer-side simplification is functionally correct in hosted coverage, but this bench rerun showed a measurable throughput regression at the previous `250 MHz` clean SPI edges.
+- The failure signature stayed downstream-limited (`sink`/`ring`, `peak=256`) rather than sampler-limited, so the regression appears to be in packetization or flush behavior rather than raw sample extraction.
+- The standard I2C smoke path was unaffected by the SPI-only firmware change.
+
+### Baseline Impact
+
+- `docs/testlog/rp2040-benchmark-baseline.md` updated: no
+- reason: the run indicates a regression that should be investigated first rather than published as a new stable baseline.
+
 ## 2026-07-21 - I2C Simplification Sweep
 
 ### Scope

@@ -598,6 +598,8 @@ static void test_spi_monitor_emits_mosi_miso_trace_packet(void) {
     assert(trace_ring_available() == 0u);
 
     spi_monitor_test_poll_timeout(0u, 1200u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 1300u);
 
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
@@ -631,6 +633,8 @@ static void test_spi_monitor_emits_mosi_only_trace_packet(void) {
     assert(spi_monitor_test_feed_samples(0u, 0x02u, 50u, raw_words, 1u) == true);
 
     spi_monitor_test_poll_timeout(0u, 900u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 950u);
 
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
@@ -754,6 +758,8 @@ static void test_spi_monitor_invalid_reconfig_does_not_flush_transaction(void) {
     assert(trace_ring_available() == 0u);
 
     spi_monitor_test_poll_timeout(0u, 1500u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 1600u);
 
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
@@ -782,6 +788,8 @@ static void test_spi_monitor_open_transaction_does_not_count_packet_before_ring_
     assert(status[0].packets_emitted == 0u);
 
     spi_monitor_test_poll_timeout(0u, 2000u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 2100u);
 
     assert(spi_monitor_get_all_status(status) == SPI_MONITOR_RC_OK);
     assert(status[0].packets_emitted == 1u);
@@ -807,6 +815,8 @@ static void test_spi_monitor_idle_cs_handoff_drops_inactive_words(void) {
     assert(spi_monitor_test_feed_samples(0u, 0x00u, 200u, raw_words, 1u) == true);
 
     spi_monitor_test_poll_timeout(0u, 1500u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 1600u);
 
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
@@ -841,6 +851,10 @@ static void test_spi_monitor_poll_flushes_short_dma_progress(void) {
     stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, true);
     stub_gpio_fire_irq(SPI_MONITOR_SPI0_CS0_GPIO, GPIO_IRQ_EDGE_RISE);
     stub_time_us32 = 1200u;
+    spi_monitor_poll();
+    assert(trace_ring_available() == 0u);
+
+    stub_time_us32 = 1300u;
     spi_monitor_poll();
 
     assert(trace_ring_available() == 1u);
@@ -882,6 +896,10 @@ static void test_spi_monitor_poll_flushes_independent_same_bus_channel_dma_progr
     stub_gpio_fire_irq(SPI_MONITOR_SPI0_CS0_GPIO, GPIO_IRQ_EDGE_RISE);
     stub_gpio_fire_irq(SPI_MONITOR_SPI0_CS1_GPIO, GPIO_IRQ_EDGE_RISE);
     stub_time_us32 = 2000u;
+    spi_monitor_poll();
+    assert(trace_ring_available() == 0u);
+
+    stub_time_us32 = 2100u;
     spi_monitor_poll();
 
     assert(trace_ring_available() == 2u);
@@ -947,6 +965,11 @@ static void test_spi_monitor_poll_timeout_refreshes_channel_overrun_status(void)
 
     stub_time_us32 = 2000u;
     spi_monitor_poll();
+    assert(spi_monitor_get_all_status(status) == SPI_MONITOR_RC_OK);
+    assert(status[0].overrun_count == 0u);
+
+    stub_time_us32 = 2100u;
+    spi_monitor_poll();
 
     assert(spi_monitor_get_all_status(status) == SPI_MONITOR_RC_OK);
     assert(status[0].overrun_count == 1u);
@@ -974,6 +997,8 @@ static void test_spi_monitor_poll_timeout_ignores_stale_now_snapshot(void) {
     assert(trace_ring_available() == 0u);
 
     spi_monitor_test_poll_timeout(0u, 1200u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 1300u);
 
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
@@ -1017,6 +1042,8 @@ static void test_spi_monitor_boundary_offset_splits_same_channel_transactions(vo
     stub_gpio_fire_irq(SPI_MONITOR_SPI0_CS0_GPIO, GPIO_IRQ_EDGE_RISE);
     stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, false);
     spi_monitor_test_poll_timeout(0u, 1200u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 1300u);
 
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
@@ -1027,13 +1054,12 @@ static void test_spi_monitor_boundary_offset_splits_same_channel_transactions(vo
     assert(packet.payload[0] == 0x34u);
 }
 
-/** @brief Verify that a fragment emitted after mid-transaction overflow still carries CONTINUED. */
+/** @brief Verify that a fragment emitted after mid-transaction overflow still carries CONTINUED while saturated backlog stays dropped. */
 static void test_spi_monitor_overflow_preserves_continued_for_same_transaction(void) {
     spi_monitor_bus_config_t config = {0};
     trace_packet_t filler = make_test_trace_packet(1u);
     trace_packet_t packet = {0};
     uint32_t raw_word[1];
-    uint8_t expected_retry_byte = 0u;
     uint32_t index;
 
     reset_real_spi_monitor_state();
@@ -1059,7 +1085,6 @@ static void test_spi_monitor_overflow_preserves_continued_for_same_transaction(v
 
     for (index = 0u; index < TRACE_PACKET_PAYLOAD_BYTES; ++index) {
         raw_word[0] = pack_spi_mosi_word((uint8_t)(0x40u + index));
-        expected_retry_byte = (uint8_t)(0x40u + index);
         assert(spi_monitor_test_feed_samples(0u, 0x01u, 20u, raw_word, 1u) == true);
     }
 
@@ -1072,6 +1097,8 @@ static void test_spi_monitor_overflow_preserves_continued_for_same_transaction(v
 
     assert(spi_monitor_test_feed_samples(0u, 0x01u, 40u, raw_word, 1u) == true);
     spi_monitor_test_poll_timeout(0u, 2000u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 2100u);
 
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
@@ -1079,10 +1106,54 @@ static void test_spi_monitor_overflow_preserves_continued_for_same_transaction(v
     assert((packet.header.flags & TRACE_FLAG_CONTINUED) != 0u);
     assert((packet.header.flags & TRACE_FLAG_END) != 0u);
     assert(packet.header.sequence == 1u);
-    assert(packet.header.payload_len == 3u);
-    assert(packet.payload[0] == expected_retry_byte);
-    assert(packet.payload[1] == 0xE1u);
-    assert(packet.payload[2] == 0xE1u);
+    assert(packet.header.payload_len == 1u);
+    assert(packet.payload[0] == 0xE1u);
+}
+
+/** @brief Verify that an extra pending boundary keeps the earliest split without surfacing as a sampler overrun. */
+static void test_spi_monitor_pending_boundary_keeps_earliest_split_without_overrun(void) {
+    spi_monitor_bus_config_t config = {0};
+    spi_monitor_channel_status_t status[SPI_MONITOR_CHANNEL_COUNT];
+    trace_packet_t packet = {0};
+    uint32_t raw_words[3];
+
+    reset_real_spi_monitor_state();
+    trace_ring_init();
+    config.capture = SPI_MONITOR_CAPTURE_MOSI;
+    config.spi_mode = 0u;
+    config.channel_select_mask = 0x01u;
+    config.timeout_us = 1000u;
+    raw_words[0] = pack_spi_mosi_word(0x12u);
+    raw_words[1] = pack_spi_mosi_word(0x34u);
+    raw_words[2] = pack_spi_mosi_word(0x56u);
+
+    assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
+    assert(spi_monitor_test_stage_channel_dma_progress_with_boundary(0u, raw_words, 3u, 1u) == true);
+
+    stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, true);
+    stub_gpio_fire_irq(SPI_MONITOR_SPI0_CS0_GPIO, GPIO_IRQ_EDGE_RISE);
+    stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, false);
+    stub_time_us32 = 100u;
+    spi_monitor_poll();
+
+    assert(spi_monitor_get_all_status(status) == SPI_MONITOR_RC_OK);
+    assert(status[0].overrun_count == 0u);
+    assert(trace_ring_available() == 1u);
+    assert(trace_ring_pop_copy(&packet) == true);
+    assert(packet.header.sequence == 1u);
+    assert(packet.header.payload_len == 1u);
+    assert(packet.payload[0] == 0x12u);
+
+    spi_monitor_test_poll_timeout(0u, 1200u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 1300u);
+
+    assert(trace_ring_available() == 1u);
+    assert(trace_ring_pop_copy(&packet) == true);
+    assert(packet.header.sequence == 2u);
+    assert(packet.header.payload_len == 2u);
+    assert(packet.payload[0] == 0x34u);
+    assert(packet.payload[1] == 0x56u);
 }
 
 static void test_cli_help_writes_response_without_connected_flag(void) {
