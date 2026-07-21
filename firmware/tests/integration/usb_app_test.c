@@ -1788,12 +1788,36 @@ static void test_usb_bulk_poll_stream_drops_packet_with_invalid_payload_len(void
     assert(trace_ring_total_consumed() == 1u);
 }
 
+static void test_usb_bulk_poll_stream_writes_unaligned_whole_packet_tail(void) {
+    trace_packet_t packet = make_test_trace_packet(43u);
+    uint32_t packet_bytes;
+    uint32_t deferrals_before;
+
+    reset_usb_stub();
+    trace_ring_init();
+
+    packet.header.payload_len = 80u;
+    for (uint32_t index = 0u; index < packet.header.payload_len; ++index) {
+        packet.payload[index] = (uint8_t)(0x20u + index);
+    }
+    packet_bytes = TRACE_PACKET_HEADER_BYTES + packet.header.payload_len;
+    deferrals_before = usb_bulk_policy_deferral_count();
+
+    assert(trace_ring_push(&packet) == true);
+    usb_bulk_service_stream(app_control_stream_enabled());
+
+    assert(stub_vendor_tx_length == packet_bytes);
+    assert(stub_vendor_write_calls == 1u);
+    assert(memcmp(stub_vendor_tx_data, &packet, packet_bytes) == 0);
+    assert(usb_bulk_policy_deferral_count() == deferrals_before);
+}
+
 static void test_usb_bulk_poll_stream_emits_nothing_when_ring_empty(void) {
     reset_usb_stub();
     usb_bulk_service_stream(app_control_stream_enabled());
 
     assert(stub_vendor_tx_length == 0u);
-    assert(stub_vendor_flush_calls == 1u);
+    assert(stub_vendor_flush_calls == 0u);
 }
 
 static void test_stream_write_uses_partial_vendor_space(void) {
@@ -2341,6 +2365,7 @@ int main(void) {
     test_usb_bulk_poll_stream_resumes_partial_trace_packet_write();
     test_usb_bulk_poll_stream_restarts_partial_packet_after_stream_disable();
     test_usb_bulk_poll_stream_drops_packet_with_invalid_payload_len();
+    test_usb_bulk_poll_stream_writes_unaligned_whole_packet_tail();
     test_usb_bulk_poll_stream_emits_nothing_when_ring_empty();
     test_usb_bulk_service_stream_counts_host_backpressure_stalls();
     test_usb_bulk_stream_write_counts_policy_deferrals();

@@ -6,6 +6,44 @@ Add new entries here after firmware-affecting test runs.
 
 Use [rp2040-benchmark-testlog-template.md](rp2040-benchmark-testlog-template.md) for the entry format.
 
+## 2026-07-21 - USB Bulk Consume Path Simplification Follow-Up
+
+### Scope
+
+- board: Raspberry Pi Pico (`RP2040`)
+- firmware clock: `250 MHz`
+- firmware/build: `build/firmware-pico-250m`
+- reason: validate the USB bulk consume-path cleanup that flushes only after progress, allows packet-completing unaligned tails, caches vendor write availability per service pass, batches policy-deferral accounting, and folds packet validation into the stream-span preparation helper
+
+### Commands
+
+- `cmake --build build/tests --target usb_app_test && ./build/tests/usb_app_test`
+- `./tools/linux/build.sh --board pico --firmware-build-dir build/firmware-pico-250m --system-clock-khz 250000`
+- `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico-250m --skip-build`
+- `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi --speed-hz 15500000 16000000 16500000 17000000 17500000 18000000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi-miso --speed-hz 5600000 5700000 5800000 5900000 --trials 3`
+
+### Results
+
+- hosted tests: `usb_app_test` built and ran cleanly with the rewritten consume path, including the new whole-packet unaligned-tail coverage and the new flush-only-after-progress expectation.
+- MOSI: `15.5/16.0/16.5/17.0/17.5 MHz` passed `3/3`; `18.0 MHz` failed `0/3`. Failing trials stayed downstream-limited with `sink>0 sampler=0 ring=0 peak=255`.
+- MOSI+MISO: `5.6/5.7/5.8 MHz` passed `3/3`; `5.9 MHz` passed `1/3`. Failing trials stayed downstream-limited with `sink>0 sampler=0 ring=0 peak=255`.
+- I2C smoke: the standard `4.0 MHz` `i2cdetect -y 1` trace stayed healthy with `transactions=112 starts=112 stops=112 overruns=0 sticky=0`.
+- I2C sample-hz notes: this follow-up reran only the conservative smoke point because the change was isolated to the USB consumer.
+
+### Interpretation
+
+- The consume path is structurally simpler now: one span-preparation helper owns packet validation and borrow state, one chunk writer owns the alignment policy, and `usb_bulk_service_stream()` no longer flushes when no bytes were queued.
+- Allowing whole-packet tails to finish untrimmed removed most alignment-policy churn in the benchmark output: `policy_deferrals` dropped to `0` on nearly every passing standard trial instead of showing steady-state increments.
+- The stable hardware envelope did not improve beyond the current RP2040 baseline on this run. MOSI remained clean through `17.5 MHz` with `18.0 MHz` unstable, and MOSI+MISO remained clean through `5.8 MHz` with `5.9 MHz` unstable.
+- The failure signature remained downstream-limited rather than sampler-limited, so this cleanup reduced consumer-path overhead and observability noise more than it changed the current throughput ceiling.
+
+### Baseline Impact
+
+- `docs/testlog/rp2040-benchmark-baseline.md` updated: no
+- reason: the measured SPI envelope matches the current published baseline rather than moving it.
+
 ## 2026-07-21 - USB Bulk Unified Chunk Write Follow-Up
 
 ### Scope
