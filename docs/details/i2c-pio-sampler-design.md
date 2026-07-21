@@ -5,7 +5,7 @@
 This document describes the current firmware scaffold for passive I2C sampling, oversampled I2C
 decode, and trace packetization.
 
-The focus here is the capture boundary from PIO sampling into per-channel ping-pong DMA buffers,
+The focus here is the capture boundary from PIO sampling into per-channel staged DMA buffers,
 then into a per-channel decoder state and a persistent per-channel trace packet buffer.
 
 ## Related Architecture
@@ -19,13 +19,13 @@ For the higher-level component view around this design, see:
 
 This design covers:
 
-- `firmware/src/trace/capture/i2c_monitor.pio`
-- `firmware/src/trace/capture/i2c_monitor.c`
-- `firmware/src/trace/capture/i2c_monitor.h`
-- `firmware/src/trace/decode/i2c_decoder.c`
-- `firmware/src/trace/decode/i2c_decoder.h`
-- `firmware/src/trace/decode/i2c_trace_packet.c`
-- `firmware/src/trace/decode/i2c_trace_packet.h`
+- `firmware/src/trace/capture/i2c/i2c_monitor.pio`
+- `firmware/src/trace/capture/i2c/i2c_monitor.c`
+- `firmware/src/trace/capture/i2c/i2c_monitor.h`
+- `firmware/src/trace/decode/i2c/i2c_decoder.c`
+- `firmware/src/trace/decode/i2c/i2c_decoder.h`
+- `firmware/src/trace/decode/i2c/i2c_trace_packet.c`
+- `firmware/src/trace/decode/i2c/i2c_trace_packet.h`
 - `firmware/src/config/i2c_monitor_config.h`
 
 ## Current Design Choice
@@ -44,7 +44,7 @@ Each I2C channel gets:
 - one PIO state machine
 - one two-pin sampling program
 - one DMA channel
-- two ping-pong raw buffers
+- a small staged raw-buffer set
 
 The sampler now starts idle at boot. A channel begins sampling only when the producer-side control
 path requests a non-zero oversampling rate for that channel. Passing `0` stops that channel and
@@ -90,28 +90,25 @@ sample and is a better fit for per-channel DMA buffers.
 
 ## Buffer Layout
 
-Each channel owns two raw buffers:
-
-- buffer `0`
-- buffer `1`
+Each channel owns `I2C_MONITOR_BUFFER_COUNT` raw buffers.
 
 Each buffer contains `I2C_MONITOR_BUFFER_WORDS` 32-bit words.
 
 At the current default:
 
-- `I2C_MONITOR_BUFFER_WORDS = 64`
+- `I2C_MONITOR_BUFFER_WORDS = 128`
 
 That gives:
 
-$$64 \times 4 = 256\ \text{bytes per buffer}$$
+$$128 \times 4 = 512\ \text{bytes per buffer}$$
 
-Per channel, the ping-pong pair consumes:
+Per channel, the raw buffer set consumes:
 
-$$2 \times 256 = 512\ \text{bytes}$$
+$$I2C_MONITOR_BUFFER_COUNT \times 512 = 1536\ \text{bytes}$$
 
 Across four channels, the raw sample buffers consume:
 
-$$4 \times 512 = 2048\ \text{bytes}$$
+$$4 \times 1536 = 6144\ \text{bytes}$$
 
 ## DMA Ownership Model
 
@@ -125,15 +122,15 @@ The DMA configuration is:
 - write increment enabled
 - DREQ paced by the owning PIO state machine
 
-The DMA writes into one active ping-pong buffer until `I2C_MONITOR_BUFFER_WORDS` words are filled.
+The DMA writes into one active raw buffer until `I2C_MONITOR_BUFFER_WORDS` words are filled.
 
 When that transfer completes:
 
 1. the DMA interrupt marks the completed buffer as ready
-2. the implementation advances to the other buffer
-3. the DMA channel is restarted against the alternate buffer
+2. the implementation advances to another free buffer in the channel-local buffer set
+3. the DMA channel is restarted against that next buffer
 
-This makes the completed buffer stable for software consumption while the alternate buffer begins
+This makes the completed buffer stable for software consumption while another buffer begins
 collecting the next raw sample block.
 
 ## Buffer Completion Path
@@ -143,14 +140,14 @@ The current implementation handles completed DMA buffers directly in the DMA IRQ
 For each completed buffer the IRQ path:
 
 - acknowledges the DMA completion
-- identifies the just-finished ping-pong slot
-- immediately re-arms DMA on the alternate slot
-- marks the completed ping-pong slot as software-owned and ready for decode
+- identifies the just-finished raw buffer
+- immediately re-arms DMA on another free slot when one is available
+- marks the completed raw buffer as software-owned and ready for decode
 
 Then the producer-core poll path:
 
 - stops any active channel whenever streaming is disabled
-- passes one completed ping-pong slot at a time to the decoder
+- passes one completed raw buffer at a time to the decoder
 - appends decoded I2C items into a persistent per-channel trace packet buffer
 
 This keeps DMA completion capture-first while moving decode and packet assembly out of the hard IRQ
@@ -163,8 +160,8 @@ arrives, the channel takes the existing stop-first overflow recovery path.
 
 ## Current Buffer Handoff Contract
 
-The current implementation no longer uses an external callback hook and no longer treats one DMA
-buffer as one trace-packet unit.
+The current implementation no longer uses an external decoder callback hook and no longer treats
+one DMA buffer as one trace-packet unit.
 
 Instead, each I2C channel owns:
 
@@ -184,10 +181,10 @@ For each completed DMA buffer:
 That means the current implementation proves:
 
 - PIO sampling works per channel
-- DMA fills alternating ping-pong buffers
-- oversampled ping-pong buffers are decoded into I2C events
+- DMA fills staged raw buffers and re-arms the next free slot in the channel-local set
+- oversampled raw buffers are decoded into I2C events
 - partial packet state survives across DMA IRQs until a transaction ends or a packet fills
-- `usb_bulk_poll_stream()` can drain those decoded packets onto the vendor bulk interface when they are available
+- `usb_bulk_service_stream()` can drain those decoded packets onto the vendor bulk interface and flush them when they are available
 
 It still does not prove:
 
@@ -252,12 +249,10 @@ When a completed fragment cannot be queued:
 - the channel sticky overrun state remains set until the channel is stopped or restarted
 - the next successfully emitted trace packet is marked so the host can detect that loss occurred
 
-When a second completed raw DMA block arrives before the producer-core poll path has consumed the
-already staged block for that channel, the current design treats that as an overrun boundary. The
-DMA IRQ immediately stops that channel hardware, latches an `OVERFLOW` transition with the saved
-restart rate, and does no packetization or ring pushes itself. The producer-core poll path then
-finishes the same stop-first transition route: it emits `OVERFLOW`, clears state, and restarts the
-channel with the saved sample rate so later decode resumes from a clean boundary. If streaming has
+When completed raw DMA blocks outrun the producer-core decode path for that channel, the current
+design drops the staged raw backlog, marks the next emitted packet with overflow metadata, clears
+decoder plus packet-builder state, and keeps the channel running. This preserves forward progress
+without stop/restart churn, but the in-flight transaction fragment is lost at that boundary. If streaming has
 been disabled before that replay happens, the pending transition is collapsed to stop-only and the
 channel is not restarted. If the boundary event cannot be emitted, the next successfully emitted
 trace packet from that restarted channel is marked with overflow status instead.
@@ -308,7 +303,7 @@ decode, and packetization separate makes bring-up easier and keeps failure modes
 
 ## Relationship To The Trace Ring
 
-The ping-pong raw buffers are upstream of the trace ring, but the current implementation decodes
+The staged raw DMA buffers are upstream of the trace ring, but the current implementation decodes
 them before queueing and keeps packet assembly state per channel.
 
 Completed raw DMA buffers are decoded into event fragments such as:

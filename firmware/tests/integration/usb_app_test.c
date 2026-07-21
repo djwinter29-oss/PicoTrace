@@ -12,9 +12,9 @@
 #include "cli/device_cli.h"
 #include "driver/system.h"
 #include "test_support.h"
-#include "trace/capture/i2c_monitor_control.h"
-#include "trace/capture/spi_monitor.h"
-#include "trace/capture/spi_monitor_control.h"
+#include "trace/capture/i2c/i2c_monitor_control.h"
+#include "trace/capture/spi/spi_monitor.h"
+#include "trace/capture/spi/spi_monitor_control.h"
 #include "spi_monitor_test_hooks.h"
 #include "trace/decode/i2c_decoder_test.h"
 #include "trace/decode/i2c_trace_packet_test.h"
@@ -37,6 +37,7 @@ static uint32_t stub_cdc_write_available_value;
 static uint32_t stub_vendor_available;
 static uint8_t stub_vendor_tx_data[4096];
 static uint32_t stub_vendor_tx_length;
+static uint32_t stub_vendor_write_calls;
 static uint32_t stub_vendor_flush_calls;
 static uint32_t stub_watchdog_reboot_calls;
 static uint32_t stub_watchdog_reboot_pc;
@@ -59,7 +60,9 @@ static bool stub_spi_bus_running[2];
 static uint32_t stub_spi_timeout_us[SPI_MONITOR_CHANNEL_COUNT];
 static uint32_t stub_spi_bus_timeout_us[2];
 static uint32_t stub_spi_packets_emitted[SPI_MONITOR_CHANNEL_COUNT];
+static uint32_t stub_spi_transactions_emitted[SPI_MONITOR_CHANNEL_COUNT];
 static uint32_t stub_spi_overrun_count[SPI_MONITOR_CHANNEL_COUNT];
+static uint32_t stub_spi_timeout_close_count[SPI_MONITOR_BUS_COUNT];
 static bool stub_spi_running[SPI_MONITOR_CHANNEL_COUNT];
 static spi_monitor_rc_t stub_spi_monitor_result = SPI_MONITOR_RC_OK;
 uint64_t stub_gpio_high_mask = UINT64_MAX;
@@ -139,6 +142,7 @@ uint32_t tud_vendor_n_write(uint8_t itf, const void *buffer, uint32_t size) {
     memcpy(&stub_vendor_tx_data[stub_vendor_tx_length], buffer, size);
     stub_vendor_tx_length += size;
     stub_vendor_available -= size;
+    stub_vendor_write_calls += 1u;
     return size;
 }
 
@@ -253,6 +257,7 @@ static spi_monitor_rc_t stub_spi_monitor_set_bus_config(uint32_t bus, const spi_
         }
         if (!stub_spi_running[channel]) {
             stub_spi_packets_emitted[channel] = 0u;
+            stub_spi_transactions_emitted[channel] = 0u;
             stub_spi_overrun_count[channel] = 0u;
         }
     }
@@ -276,7 +281,9 @@ static spi_monitor_rc_t stub_spi_monitor_get_bus_status(uint32_t bus, spi_monito
     status_out->channel_select_mask = stub_spi_channel_select_mask[bus];
     status_out->timeout_us = stub_spi_bus_timeout_us[bus];
     status_out->packets_emitted = stub_spi_packets_emitted[first_channel];
+    status_out->transactions_emitted = stub_spi_transactions_emitted[first_channel];
     status_out->overrun_count = stub_spi_overrun_count[first_channel];
+    status_out->timeout_close_count = stub_spi_timeout_close_count[bus];
     return SPI_MONITOR_RC_OK;
 }
 
@@ -318,6 +325,7 @@ void reset_usb_stub(void) {
     memset(stub_cdc_tx_data, 0, sizeof(stub_cdc_tx_data));
     stub_vendor_available = sizeof(stub_vendor_tx_data);
     stub_vendor_tx_length = 0u;
+    stub_vendor_write_calls = 0u;
     stub_vendor_flush_calls = 0u;
     stub_watchdog_reboot_calls = 0u;
     stub_watchdog_reboot_pc = 0u;
@@ -340,11 +348,14 @@ void reset_usb_stub(void) {
     memset(stub_spi_timeout_us, 0, sizeof(stub_spi_timeout_us));
     memset(stub_spi_bus_timeout_us, 0, sizeof(stub_spi_bus_timeout_us));
     memset(stub_spi_packets_emitted, 0, sizeof(stub_spi_packets_emitted));
+    memset(stub_spi_transactions_emitted, 0, sizeof(stub_spi_transactions_emitted));
     memset(stub_spi_overrun_count, 0, sizeof(stub_spi_overrun_count));
+    memset(stub_spi_timeout_close_count, 0, sizeof(stub_spi_timeout_close_count));
     memset(stub_spi_running, 0, sizeof(stub_spi_running));
     stub_spi_monitor_result = SPI_MONITOR_RC_OK;
     stub_dma_configure_fail_next = false;
     memset(stub_vendor_tx_data, 0, sizeof(stub_vendor_tx_data));
+    usb_bulk_service_stream(false);
     app_control_init();
     i2c_monitor_control_init();
     spi_monitor_control_init();
@@ -361,6 +372,8 @@ void reset_usb_stub(void) {
     );
     spi_monitor_control_set_inline_mode(true);
     stub_led_set_calls = 0u;
+    usb_cdc_reset_stats();
+    usb_hid_reset_stats();
     device_cli_init(&test_device_cli_transport);
 }
 
@@ -429,6 +442,10 @@ static uint32_t pack_spi_byte_word(uint8_t mosi_byte, uint8_t miso_byte) {
     }
 
     return pack_spi_sample_word(samples, 8u);
+}
+
+static uint32_t pack_spi_mosi_word(uint8_t mosi_byte) {
+    return mosi_byte;
 }
 
 static uint32_t pack_spi_lane_word(uint8_t data_byte, uint8_t sample_bit_index) {
@@ -582,6 +599,8 @@ static void test_spi_monitor_emits_mosi_miso_trace_packet(void) {
     assert(trace_ring_available() == 0u);
 
     spi_monitor_test_poll_timeout(0u, 1200u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 1300u);
 
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
@@ -609,12 +628,14 @@ static void test_spi_monitor_emits_mosi_only_trace_packet(void) {
     config.spi_mode = 1u;
     config.channel_select_mask = 0x02u;
     config.timeout_us = 800u;
-    raw_words[0] = pack_spi_byte_word(0x5Au, 0xC3u);
+    raw_words[0] = pack_spi_mosi_word(0x5Au);
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
     assert(spi_monitor_test_feed_samples(0u, 0x02u, 50u, raw_words, 1u) == true);
 
     spi_monitor_test_poll_timeout(0u, 900u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 950u);
 
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
@@ -637,7 +658,7 @@ static void test_spi_monitor_stream_disable_blocks_ring_output(void) {
     config.spi_mode = 0u;
     config.channel_select_mask = 0x01u;
     config.timeout_us = 1000u;
-    raw_words[0] = pack_spi_byte_word(0x33u, 0xCCu);
+    raw_words[0] = pack_spi_mosi_word(0x33u);
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
     app_control_set_stream_enabled(false);
@@ -729,7 +750,7 @@ static void test_spi_monitor_invalid_reconfig_does_not_flush_transaction(void) {
     invalid.capture = SPI_MONITOR_CAPTURE_MOSI;
     invalid.spi_mode = 2u;
     invalid.channel_select_mask = 0u;
-    raw_words[0] = pack_spi_byte_word(0x96u, 0x00u);
+    raw_words[0] = pack_spi_mosi_word(0x96u);
 
     assert(spi_monitor_set_bus_config(0u, &start) == SPI_MONITOR_RC_OK);
     assert(spi_monitor_test_feed_samples(0u, 0x01u, 100u, raw_words, 1u) == true);
@@ -738,6 +759,8 @@ static void test_spi_monitor_invalid_reconfig_does_not_flush_transaction(void) {
     assert(trace_ring_available() == 0u);
 
     spi_monitor_test_poll_timeout(0u, 1500u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 1600u);
 
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
@@ -757,7 +780,7 @@ static void test_spi_monitor_open_transaction_does_not_count_packet_before_ring_
     config.spi_mode = 0u;
     config.channel_select_mask = 0x01u;
     config.timeout_us = 1000u;
-    raw_words[0] = pack_spi_byte_word(0x33u, 0x00u);
+    raw_words[0] = pack_spi_mosi_word(0x33u);
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
     assert(spi_monitor_test_feed_samples(0u, 0x01u, 25u, raw_words, 1u) == true);
@@ -766,6 +789,8 @@ static void test_spi_monitor_open_transaction_does_not_count_packet_before_ring_
     assert(status[0].packets_emitted == 0u);
 
     spi_monitor_test_poll_timeout(0u, 2000u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 2100u);
 
     assert(spi_monitor_get_all_status(status) == SPI_MONITOR_RC_OK);
     assert(status[0].packets_emitted == 1u);
@@ -783,14 +808,16 @@ static void test_spi_monitor_idle_cs_handoff_drops_inactive_words(void) {
     config.spi_mode = 0u;
     config.channel_select_mask = 0x01u;
     config.timeout_us = 1000u;
-    raw_words[0] = pack_spi_byte_word(0x12u, 0x00u);
+    raw_words[0] = pack_spi_mosi_word(0x12u);
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
     assert(spi_monitor_test_feed_samples(0u, 0x01u, 100u, raw_words, 1u) == true);
-    raw_words[0] = pack_spi_byte_word(0x34u, 0x00u);
+    raw_words[0] = pack_spi_mosi_word(0x34u);
     assert(spi_monitor_test_feed_samples(0u, 0x00u, 200u, raw_words, 1u) == true);
 
     spi_monitor_test_poll_timeout(0u, 1500u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 1600u);
 
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
@@ -813,8 +840,8 @@ static void test_spi_monitor_poll_flushes_short_dma_progress(void) {
     config.timeout_us = 1000u;
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
-    raw_words[0] = pack_spi_byte_word(0x9Au, 0x00u);
-    assert(spi_monitor_test_stage_dma_progress(0u, raw_words, 1u) == true);
+    raw_words[0] = pack_spi_mosi_word(0x9Au);
+    assert(spi_monitor_test_stage_channel_dma_progress(0u, raw_words, 1u) == true);
 
     stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, false);
     stub_time_us32 = 100u;
@@ -823,7 +850,12 @@ static void test_spi_monitor_poll_flushes_short_dma_progress(void) {
     assert(trace_ring_available() == 0u);
 
     stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, true);
+    stub_gpio_fire_irq(SPI_MONITOR_SPI0_CS0_GPIO, GPIO_IRQ_EDGE_RISE);
     stub_time_us32 = 1200u;
+    spi_monitor_poll();
+    assert(trace_ring_available() == 0u);
+
+    stub_time_us32 = 1300u;
     spi_monitor_poll();
 
     assert(trace_ring_available() == 1u);
@@ -850,8 +882,8 @@ static void test_spi_monitor_poll_flushes_independent_same_bus_channel_dma_progr
     config.timeout_us = 1000u;
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
-    channel0_words[0] = pack_spi_byte_word(0x11u, 0x00u);
-    channel1_words[0] = pack_spi_byte_word(0x22u, 0x00u);
+    channel0_words[0] = pack_spi_mosi_word(0x11u);
+    channel1_words[0] = pack_spi_mosi_word(0x22u);
     assert(spi_monitor_test_stage_channel_dma_progress(0u, channel0_words, 1u) == true);
     assert(spi_monitor_test_stage_channel_dma_progress(1u, channel1_words, 1u) == true);
 
@@ -862,7 +894,13 @@ static void test_spi_monitor_poll_flushes_independent_same_bus_channel_dma_progr
 
     stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, true);
     stub_gpio_set_level(SPI_MONITOR_SPI0_CS1_GPIO, true);
+    stub_gpio_fire_irq(SPI_MONITOR_SPI0_CS0_GPIO, GPIO_IRQ_EDGE_RISE);
+    stub_gpio_fire_irq(SPI_MONITOR_SPI0_CS1_GPIO, GPIO_IRQ_EDGE_RISE);
     stub_time_us32 = 2000u;
+    spi_monitor_poll();
+    assert(trace_ring_available() == 0u);
+
+    stub_time_us32 = 2100u;
     spi_monitor_poll();
 
     assert(trace_ring_available() == 2u);
@@ -914,7 +952,7 @@ static void test_spi_monitor_poll_timeout_refreshes_channel_overrun_status(void)
     config.spi_mode = 0u;
     config.channel_select_mask = 0x01u;
     config.timeout_us = 1000u;
-    raw_words[0] = pack_spi_byte_word(0xAAu, 0x00u);
+    raw_words[0] = pack_spi_mosi_word(0xAAu);
 
     for (index = 0u; index < TRACE_RING_CAPACITY; ++index) {
         packet.header.sequence = (uint16_t)index;
@@ -927,6 +965,11 @@ static void test_spi_monitor_poll_timeout_refreshes_channel_overrun_status(void)
     assert(status[0].overrun_count == 0u);
 
     stub_time_us32 = 2000u;
+    spi_monitor_poll();
+    assert(spi_monitor_get_all_status(status) == SPI_MONITOR_RC_OK);
+    assert(status[0].overrun_count == 0u);
+
+    stub_time_us32 = 2100u;
     spi_monitor_poll();
 
     assert(spi_monitor_get_all_status(status) == SPI_MONITOR_RC_OK);
@@ -945,7 +988,7 @@ static void test_spi_monitor_poll_timeout_ignores_stale_now_snapshot(void) {
     config.spi_mode = 0u;
     config.channel_select_mask = 0x01u;
     config.timeout_us = 1000u;
-    raw_words[0] = pack_spi_byte_word(0x6Au, 0x00u);
+    raw_words[0] = pack_spi_mosi_word(0x6Au);
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
     assert(spi_monitor_test_feed_samples(0u, 0x01u, 100u, raw_words, 1u) == true);
@@ -955,6 +998,8 @@ static void test_spi_monitor_poll_timeout_ignores_stale_now_snapshot(void) {
     assert(trace_ring_available() == 0u);
 
     spi_monitor_test_poll_timeout(0u, 1200u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 1300u);
 
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
@@ -976,8 +1021,8 @@ static void test_spi_monitor_boundary_offset_splits_same_channel_transactions(vo
     config.spi_mode = 0u;
     config.channel_select_mask = 0x01u;
     config.timeout_us = 1000u;
-    raw_words[0] = pack_spi_byte_word(0x12u, 0x00u);
-    raw_words[1] = pack_spi_byte_word(0x34u, 0x00u);
+    raw_words[0] = pack_spi_mosi_word(0x12u);
+    raw_words[1] = pack_spi_mosi_word(0x34u);
 
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
     assert(spi_monitor_test_stage_channel_dma_progress_with_boundary(0u, raw_words, 2u, 1u) == true);
@@ -998,6 +1043,8 @@ static void test_spi_monitor_boundary_offset_splits_same_channel_transactions(vo
     stub_gpio_fire_irq(SPI_MONITOR_SPI0_CS0_GPIO, GPIO_IRQ_EDGE_RISE);
     stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, false);
     spi_monitor_test_poll_timeout(0u, 1200u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 1300u);
 
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
@@ -1008,13 +1055,12 @@ static void test_spi_monitor_boundary_offset_splits_same_channel_transactions(vo
     assert(packet.payload[0] == 0x34u);
 }
 
-/** @brief Verify that a fragment emitted after mid-transaction overflow still carries CONTINUED. */
+/** @brief Verify that a fragment emitted after mid-transaction overflow still carries CONTINUED while saturated backlog stays dropped. */
 static void test_spi_monitor_overflow_preserves_continued_for_same_transaction(void) {
     spi_monitor_bus_config_t config = {0};
     trace_packet_t filler = make_test_trace_packet(1u);
     trace_packet_t packet = {0};
     uint32_t raw_word[1];
-    uint8_t expected_retry_byte = 0u;
     uint32_t index;
 
     reset_real_spi_monitor_state();
@@ -1027,7 +1073,7 @@ static void test_spi_monitor_overflow_preserves_continued_for_same_transaction(v
     assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
 
     for (index = 0u; index < (TRACE_PACKET_PAYLOAD_BYTES + 1u); ++index) {
-        raw_word[0] = pack_spi_byte_word((uint8_t)index, 0u);
+        raw_word[0] = pack_spi_mosi_word((uint8_t)index);
         assert(spi_monitor_test_feed_samples(0u, 0x01u, 10u, raw_word, 1u) == true);
     }
 
@@ -1039,12 +1085,11 @@ static void test_spi_monitor_overflow_preserves_continued_for_same_transaction(v
     }
 
     for (index = 0u; index < TRACE_PACKET_PAYLOAD_BYTES; ++index) {
-        raw_word[0] = pack_spi_byte_word((uint8_t)(0x40u + index), 0u);
-        expected_retry_byte = (uint8_t)(0x40u + index);
+        raw_word[0] = pack_spi_mosi_word((uint8_t)(0x40u + index));
         assert(spi_monitor_test_feed_samples(0u, 0x01u, 20u, raw_word, 1u) == true);
     }
 
-    raw_word[0] = pack_spi_byte_word(0xE1u, 0u);
+    raw_word[0] = pack_spi_mosi_word(0xE1u);
     assert(spi_monitor_test_feed_samples(0u, 0x01u, 30u, raw_word, 1u) == true);
 
     while (trace_ring_available() != 0u) {
@@ -1053,6 +1098,8 @@ static void test_spi_monitor_overflow_preserves_continued_for_same_transaction(v
 
     assert(spi_monitor_test_feed_samples(0u, 0x01u, 40u, raw_word, 1u) == true);
     spi_monitor_test_poll_timeout(0u, 2000u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 2100u);
 
     assert(trace_ring_available() == 1u);
     assert(trace_ring_pop_copy(&packet) == true);
@@ -1060,10 +1107,54 @@ static void test_spi_monitor_overflow_preserves_continued_for_same_transaction(v
     assert((packet.header.flags & TRACE_FLAG_CONTINUED) != 0u);
     assert((packet.header.flags & TRACE_FLAG_END) != 0u);
     assert(packet.header.sequence == 1u);
-    assert(packet.header.payload_len == 3u);
-    assert(packet.payload[0] == expected_retry_byte);
-    assert(packet.payload[1] == 0xE1u);
-    assert(packet.payload[2] == 0xE1u);
+    assert(packet.header.payload_len == 1u);
+    assert(packet.payload[0] == 0xE1u);
+}
+
+/** @brief Verify that an extra pending boundary keeps the earliest split without surfacing as a sampler overrun. */
+static void test_spi_monitor_pending_boundary_keeps_earliest_split_without_overrun(void) {
+    spi_monitor_bus_config_t config = {0};
+    spi_monitor_channel_status_t status[SPI_MONITOR_CHANNEL_COUNT];
+    trace_packet_t packet = {0};
+    uint32_t raw_words[3];
+
+    reset_real_spi_monitor_state();
+    trace_ring_init();
+    config.capture = SPI_MONITOR_CAPTURE_MOSI;
+    config.spi_mode = 0u;
+    config.channel_select_mask = 0x01u;
+    config.timeout_us = 1000u;
+    raw_words[0] = pack_spi_mosi_word(0x12u);
+    raw_words[1] = pack_spi_mosi_word(0x34u);
+    raw_words[2] = pack_spi_mosi_word(0x56u);
+
+    assert(spi_monitor_set_bus_config(0u, &config) == SPI_MONITOR_RC_OK);
+    assert(spi_monitor_test_stage_channel_dma_progress_with_boundary(0u, raw_words, 3u, 1u) == true);
+
+    stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, true);
+    stub_gpio_fire_irq(SPI_MONITOR_SPI0_CS0_GPIO, GPIO_IRQ_EDGE_RISE);
+    stub_gpio_set_level(SPI_MONITOR_SPI0_CS0_GPIO, false);
+    stub_time_us32 = 100u;
+    spi_monitor_poll();
+
+    assert(spi_monitor_get_all_status(status) == SPI_MONITOR_RC_OK);
+    assert(status[0].overrun_count == 0u);
+    assert(trace_ring_available() == 1u);
+    assert(trace_ring_pop_copy(&packet) == true);
+    assert(packet.header.sequence == 1u);
+    assert(packet.header.payload_len == 1u);
+    assert(packet.payload[0] == 0x12u);
+
+    spi_monitor_test_poll_timeout(0u, 1200u);
+    assert(trace_ring_available() == 0u);
+    spi_monitor_test_poll_timeout(0u, 1300u);
+
+    assert(trace_ring_available() == 1u);
+    assert(trace_ring_pop_copy(&packet) == true);
+    assert(packet.header.sequence == 2u);
+    assert(packet.header.payload_len == 2u);
+    assert(packet.payload[0] == 0x34u);
+    assert(packet.payload[1] == 0x56u);
 }
 
 static void test_cli_help_writes_response_without_connected_flag(void) {
@@ -1102,6 +1193,105 @@ static void test_cli_help_is_flushed_after_temporary_tx_backpressure(void) {
     assert(strstr((const char *)stub_cdc_tx_data, "Commands:") != NULL);
     assert(strstr((const char *)stub_cdc_tx_data, "help") != NULL);
     assert(stub_cdc_flush_calls >= 1u);
+}
+
+static void test_cdc_rx_callback_leaves_remaining_packets_for_later_pass(void) {
+    uint8_t payload[192];
+    uint8_t drained[192];
+
+    reset_usb_stub();
+    for (uint32_t index = 0u; index < sizeof(payload); ++index) {
+        payload[index] = (uint8_t)index;
+    }
+    load_cdc_rx(payload, sizeof(payload));
+
+    tud_cdc_rx_cb(0u);
+
+    assert(stub_cdc_rx_offset == 128u);
+    assert(usb_cdc_read(drained, sizeof(drained)) == 128u);
+    assert(memcmp(drained, payload, 128u) == 0);
+
+    tud_cdc_rx_cb(0u);
+
+    assert(stub_cdc_rx_offset == sizeof(payload));
+    assert(usb_cdc_read(drained, sizeof(drained)) == 64u);
+    assert(memcmp(drained, &payload[128], 64u) == 0);
+}
+
+static void test_cdc_rx_callback_preserves_packet_tail_when_queue_fills(void) {
+    uint8_t initial[512];
+    uint8_t overflow[80];
+    uint8_t drained[512];
+    usb_cdc_stats_t stats;
+
+    reset_usb_stub();
+    while (usb_cdc_read(drained, sizeof(drained)) != 0u) {
+    }
+    for (uint32_t index = 0u; index < sizeof(initial); ++index) {
+        initial[index] = (uint8_t)index;
+    }
+    for (uint32_t index = 0u; index < sizeof(overflow); ++index) {
+        overflow[index] = (uint8_t)(0x80u + index);
+    }
+
+    load_cdc_rx(initial, 256u);
+    tud_cdc_rx_cb(0u);
+    tud_cdc_rx_cb(0u);
+    load_cdc_rx(&initial[256], 256u);
+    tud_cdc_rx_cb(0u);
+    tud_cdc_rx_cb(0u);
+
+    load_cdc_rx(overflow, sizeof(overflow));
+    tud_cdc_rx_cb(0u);
+
+    assert(stub_cdc_rx_offset == 0u);
+    stats = usb_cdc_get_stats();
+    assert(stats.rx_dropped_bytes == 0u);
+    assert(usb_cdc_read(drained, sizeof(drained)) == sizeof(initial));
+    assert(memcmp(drained, initial, sizeof(initial)) == 0);
+
+    tud_cdc_rx_cb(0u);
+
+    assert(stub_cdc_rx_offset == sizeof(overflow));
+    assert(usb_cdc_read(drained, sizeof(drained)) == sizeof(overflow));
+    assert(memcmp(drained, overflow, sizeof(overflow)) == 0);
+}
+
+static void test_cdc_tx_poll_limits_one_pass_budget(void) {
+    uint8_t payload[192];
+    uint8_t drained[512];
+
+    reset_usb_stub();
+    while (usb_cdc_read(drained, sizeof(drained)) != 0u) {
+    }
+    usb_cdc_poll_tx();
+    stub_cdc_tx_length = 0u;
+    stub_cdc_flush_calls = 0u;
+    memset(stub_cdc_tx_data, 0, sizeof(stub_cdc_tx_data));
+    for (uint32_t index = 0u; index < sizeof(payload); ++index) {
+        payload[index] = (uint8_t)(0xA0u + index);
+    }
+
+    assert(usb_cdc_write(payload, sizeof(payload)) == true);
+    assert(stub_cdc_tx_length == 128u);
+    assert(memcmp(stub_cdc_tx_data, payload, 128u) == 0);
+
+    usb_cdc_poll_tx();
+
+    assert(stub_cdc_tx_length == sizeof(payload));
+    assert(memcmp(stub_cdc_tx_data, payload, sizeof(payload)) == 0);
+}
+
+static void test_cdc_tx_enqueue_failure_is_counted(void) {
+    uint8_t payload[1025u];
+    usb_cdc_stats_t stats;
+
+    reset_usb_stub();
+    memset(payload, 0x5Au, sizeof(payload));
+
+    assert(usb_cdc_write(payload, sizeof(payload)) == false);
+    stats = usb_cdc_get_stats();
+    assert(stats.tx_enqueue_failures == 1u);
 }
 
 static void test_cli_led_command_and_hid_led_command_share_action(void) {
@@ -1242,13 +1432,15 @@ static void test_cli_spimon_status_reports_bus_state(void) {
     stub_spi_mode[0] = 0u;
     stub_spi_timeout_us[0] = 1200u;
     stub_spi_packets_emitted[0] = 9u;
+    stub_spi_transactions_emitted[0] = 3u;
     stub_spi_overrun_count[0] = 2u;
+    stub_spi_timeout_close_count[0] = 1u;
     load_cdc_rx(payload, sizeof(payload));
 
     tud_cdc_rx_cb(0u);
     device_cli_poll();
 
-    assert(strstr((const char *)stub_cdc_tx_data, "spimon bus0 running select=ch0 capture=mosi mode=0 timeout_us=1200 packets=9 overruns=2") != NULL);
+    assert(strstr((const char *)stub_cdc_tx_data, "spimon bus0 running select=ch0 capture=mosi mode=0 timeout_us=1200 packets=9 txns=3 overruns=2 timeout_closes=1") != NULL);
 }
 
 static void test_cli_spimon_reports_disabled_state(void) {
@@ -1281,6 +1473,58 @@ static void test_hid_reboot_command_runs_once(void) {
     assert(response.opcode == USB_HID_OPCODE_REBOOT);
     assert(response.sequence == 9u);
     assert(response.status == USB_HID_STATUS_OK);
+}
+
+static void test_hid_second_report_is_rejected_without_overwriting_pending_command(void) {
+    usb_hid_command_t first = {0};
+    usb_hid_command_t second = {0};
+    usb_hid_command_t response = {0};
+    usb_hid_stats_t stats;
+
+    reset_usb_stub();
+    first.opcode = USB_HID_OPCODE_LED_ON;
+    first.sequence = 10u;
+    second.opcode = USB_HID_OPCODE_LED_OFF;
+    second.sequence = 11u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&first, sizeof(first));
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&second, sizeof(second));
+
+    assert(stub_led_set_calls == 0u);
+    stats = usb_hid_get_stats();
+    assert(stats.busy_rejects == 1u);
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_LED_OFF);
+    assert(response.sequence == 11u);
+    assert(response.status == USB_HID_STATUS_BUSY);
+
+    usb_hid_poll();
+
+    assert(stub_led_set_calls == 1u);
+    assert(stub_led_state == true);
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_LED_ON);
+    assert(response.sequence == 10u);
+    assert(response.status == USB_HID_STATUS_OK);
+}
+
+static void test_hid_unknown_opcode_is_counted(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+    usb_hid_stats_t stats;
+
+    reset_usb_stub();
+    command.opcode = 0x7Fu;
+    command.sequence = 20u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    stats = usb_hid_get_stats();
+    assert(stats.unknown_opcodes == 1u);
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == 0x7Fu);
+    assert(response.status == USB_HID_STATUS_UNKNOWN_COMMAND);
 }
 
 static void test_system_reboot_uses_watchdog_reboot(void) {
@@ -1439,13 +1683,54 @@ static void test_usb_bulk_poll_stream_drains_trace_packet(void) {
     trace_ring_init();
 
     assert(trace_ring_push(&packet) == true);
-    usb_bulk_poll_stream(app_control_stream_enabled());
-    usb_bulk_flush();
+    usb_bulk_service_stream(app_control_stream_enabled());
 
     assert(stub_vendor_tx_length == packet_bytes);
+    assert(stub_vendor_write_calls == 1u);
     assert(memcmp(stub_vendor_tx_data, &packet, packet_bytes) == 0);
     assert(trace_ring_available() == 0u);
-    assert(stub_vendor_flush_calls == 1u);
+    assert(stub_vendor_flush_calls == 0u);
+}
+
+static void test_usb_bulk_service_stream_counts_host_backpressure_stalls(void) {
+    trace_packet_t packet = make_test_trace_packet(45u);
+    uint32_t host_stalls_before;
+    uint32_t policy_deferrals_before;
+
+    reset_usb_stub();
+    trace_ring_init();
+
+    host_stalls_before = usb_bulk_host_backpressure_stall_count();
+    policy_deferrals_before = usb_bulk_policy_deferral_count();
+    assert(trace_ring_push(&packet) == true);
+    stub_vendor_available = 0u;
+
+    assert(usb_bulk_service_stream(app_control_stream_enabled()) == false);
+    assert(usb_bulk_host_backpressure_stall_count() == (host_stalls_before + 1u));
+    assert(usb_bulk_policy_deferral_count() == policy_deferrals_before);
+}
+
+static void test_usb_bulk_service_stream_counts_policy_deferrals(void) {
+    trace_packet_t packet = make_test_trace_packet(46u);
+    uint32_t packet_bytes;
+    uint32_t deferrals_before;
+
+    reset_usb_stub();
+    trace_ring_init();
+    packet.header.payload_len = 114u;
+    for (uint32_t index = 0u; index < packet.header.payload_len; ++index) {
+        packet.payload[index] = (uint8_t)(0x40u + index);
+    }
+    packet_bytes = TRACE_PACKET_HEADER_BYTES + packet.header.payload_len;
+    stub_vendor_available = 100u;
+    deferrals_before = usb_bulk_policy_deferral_count();
+    assert(trace_ring_push(&packet) == true);
+
+    assert(usb_bulk_service_stream(app_control_stream_enabled()) == true);
+    assert(stub_vendor_tx_length == 100u);
+    assert(trace_ring_available() == 1u);
+    assert(packet_bytes > stub_vendor_tx_length);
+    assert(usb_bulk_policy_deferral_count() == (deferrals_before + 1u));
 }
 
 static void test_usb_bulk_poll_stream_resumes_partial_trace_packet_write(void) {
@@ -1457,13 +1742,12 @@ static void test_usb_bulk_poll_stream_resumes_partial_trace_packet_write(void) {
 
     assert(trace_ring_push(&packet) == true);
     stub_vendor_available = 8u;
-    usb_bulk_poll_stream(app_control_stream_enabled());
+    usb_bulk_service_stream(app_control_stream_enabled());
     assert(stub_vendor_tx_length == 8u);
     assert(trace_ring_available() == 1u);
 
     stub_vendor_available = sizeof(stub_vendor_tx_data) - stub_vendor_tx_length;
-    usb_bulk_poll_stream(app_control_stream_enabled());
-    usb_bulk_flush();
+    usb_bulk_service_stream(app_control_stream_enabled());
 
     assert(stub_vendor_tx_length == packet_bytes);
     assert(memcmp(stub_vendor_tx_data, &packet, packet_bytes) == 0);
@@ -1479,72 +1763,116 @@ static void test_usb_bulk_poll_stream_restarts_partial_packet_after_stream_disab
 
     assert(trace_ring_push(&packet) == true);
     stub_vendor_available = 8u;
-    usb_bulk_poll_stream(app_control_stream_enabled());
+    usb_bulk_service_stream(app_control_stream_enabled());
     assert(stub_vendor_tx_length == 8u);
     assert(trace_ring_available() == 1u);
 
     app_control_set_stream_enabled(false);
-    usb_bulk_poll_stream(app_control_stream_enabled());
+    usb_bulk_service_stream(app_control_stream_enabled());
 
     memset(stub_vendor_tx_data, 0, sizeof(stub_vendor_tx_data));
     stub_vendor_tx_length = 0u;
     stub_vendor_available = sizeof(stub_vendor_tx_data);
     app_control_set_stream_enabled(true);
-    usb_bulk_poll_stream(app_control_stream_enabled());
+    usb_bulk_service_stream(app_control_stream_enabled());
 
     assert(stub_vendor_tx_length == packet_bytes);
     assert(memcmp(stub_vendor_tx_data, &packet, packet_bytes) == 0);
     assert(trace_ring_available() == 0u);
 }
 
-static void test_usb_bulk_poll_stream_drops_packet_with_invalid_payload_len(void) {
+static void test_usb_bulk_poll_stream_clamps_invalid_payload_len(void) {
     trace_packet_t packet = make_test_trace_packet(44u);
+    uint32_t packet_bytes;
 
     reset_usb_stub();
     trace_ring_init();
 
     packet.header.payload_len = (uint16_t)(TRACE_PACKET_PAYLOAD_BYTES + 1u);
     assert(trace_ring_push(&packet) == true);
-    usb_bulk_poll_stream(app_control_stream_enabled());
-    usb_bulk_flush();
+    usb_bulk_service_stream(app_control_stream_enabled());
 
-    assert(stub_vendor_tx_length == 0u);
+    packet_bytes = TRACE_PACKET_HEADER_BYTES + TRACE_PACKET_PAYLOAD_BYTES;
+    assert(stub_vendor_tx_length == packet_bytes);
     assert(trace_ring_available() == 0u);
     assert(trace_ring_total_consumed() == 1u);
 }
 
+static void test_usb_bulk_poll_stream_writes_unaligned_whole_packet_tail(void) {
+    trace_packet_t packet = make_test_trace_packet(43u);
+    uint32_t packet_bytes;
+    uint32_t deferrals_before;
+
+    reset_usb_stub();
+    trace_ring_init();
+
+    packet.header.payload_len = 80u;
+    for (uint32_t index = 0u; index < packet.header.payload_len; ++index) {
+        packet.payload[index] = (uint8_t)(0x20u + index);
+    }
+    packet_bytes = TRACE_PACKET_HEADER_BYTES + packet.header.payload_len;
+    deferrals_before = usb_bulk_policy_deferral_count();
+
+    assert(trace_ring_push(&packet) == true);
+    usb_bulk_service_stream(app_control_stream_enabled());
+
+    assert(stub_vendor_tx_length == packet_bytes);
+    assert(stub_vendor_write_calls == 1u);
+    assert(memcmp(stub_vendor_tx_data, &packet, packet_bytes) == 0);
+    assert(usb_bulk_policy_deferral_count() == deferrals_before);
+}
+
 static void test_usb_bulk_poll_stream_emits_nothing_when_ring_empty(void) {
     reset_usb_stub();
-    usb_bulk_poll_stream(app_control_stream_enabled());
-    usb_bulk_flush();
+    usb_bulk_service_stream(app_control_stream_enabled());
 
     assert(stub_vendor_tx_length == 0u);
-    assert(stub_vendor_flush_calls == 1u);
+    assert(stub_vendor_flush_calls == 0u);
 }
 
-static void test_stream_write_uses_partial_vendor_space(void) {
-    uint8_t frame[1024];
-    uint32_t index;
+static void test_usb_bulk_service_stream_uses_partial_vendor_space(void) {
+    trace_packet_t packet = make_test_trace_packet(47u);
 
     reset_usb_stub();
-    stub_vendor_available = 512u;
-    for (index = 0u; index < sizeof(frame); ++index) {
-        frame[index] = (uint8_t)(index & 0xFFu);
+    trace_ring_init();
+
+    packet.header.payload_len = 600u;
+    for (uint32_t index = 0u; index < packet.header.payload_len; ++index) {
+        packet.payload[index] = (uint8_t)(index & 0xFFu);
     }
 
-    assert(usb_bulk_stream_write(frame, sizeof(frame)) == 512u);
+    assert(trace_ring_push(&packet) == true);
+    stub_vendor_available = 512u;
+
+    assert(usb_bulk_service_stream(app_control_stream_enabled()) == true);
     assert(stub_vendor_tx_length == 512u);
-    assert(memcmp(stub_vendor_tx_data, frame, stub_vendor_tx_length) == 0);
+    assert(memcmp(stub_vendor_tx_data, &packet, stub_vendor_tx_length) == 0);
     assert(stub_vendor_available == 0u);
+    assert(trace_ring_available() == 1u);
 }
 
-static void test_vendor_write_uses_bulk_in_interface(void) {
-    static const uint8_t payload[] = {0x10u, 0x20u, 0x30u};
+static void test_usb_bulk_service_stream_counts_policy_deferred_bytes(void) {
+    trace_packet_t packet = make_test_trace_packet(48u);
+    uint32_t deferred_before;
 
     reset_usb_stub();
-    assert(usb_bulk_write(payload, sizeof(payload)) == true);
-    assert(stub_vendor_tx_length == sizeof(payload));
-    assert(memcmp(stub_vendor_tx_data, payload, sizeof(payload)) == 0);
+    trace_ring_init();
+    packet.header.payload_len = 114u;
+    for (uint32_t index = 0u; index < packet.header.payload_len; ++index) {
+        packet.payload[index] = (uint8_t)(0x80u + index);
+    }
+    stub_vendor_available = 100u;
+    deferred_before = usb_bulk_deferred_bytes_count();
+    assert(trace_ring_push(&packet) == true);
+
+    assert(usb_bulk_service_stream(app_control_stream_enabled()) == true);
+    assert(stub_vendor_tx_length == 100u);
+    assert(memcmp(stub_vendor_tx_data, &packet, stub_vendor_tx_length) == 0);
+    assert(usb_bulk_deferred_bytes_count() == (deferred_before + 36u));
+}
+
+static void test_usb_bulk_flush_flushes_vendor_endpoint(void) {
+    reset_usb_stub();
     assert(stub_vendor_flush_calls == 0u);
 
     usb_bulk_flush();
@@ -1743,6 +2071,43 @@ static void test_hid_i2c_monitor_get_all_status_rejects_failed_snapshot(void) {
     assert(response.payload_length == 0u);
 }
 
+static void test_hid_i2c_monitor_get_status_reports_invalid_channel(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+
+    reset_usb_stub();
+    command.opcode = USB_HID_OPCODE_I2C_MONITOR_GET_STATUS;
+    command.sequence = 16u;
+    command.payload_length = 1u;
+    command.payload[0] = 7u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_I2C_MONITOR_GET_STATUS);
+    assert(response.status == USB_HID_STATUS_BAD_LENGTH);
+    assert(response.payload_length == 0u);
+}
+
+static void test_hid_i2c_monitor_get_all_status_reports_busy(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+
+    reset_usb_stub();
+    stub_monitor_result = I2C_MONITOR_RC_BUSY;
+    command.opcode = USB_HID_OPCODE_I2C_MONITOR_GET_ALL_STATUS;
+    command.sequence = 17u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_I2C_MONITOR_GET_ALL_STATUS);
+    assert(response.status == USB_HID_STATUS_BUSY);
+    assert(response.payload_length == 0u);
+}
+
 static void test_hid_spi_monitor_set_config_updates_bus(void) {
     usb_hid_command_t command = {0};
     usb_hid_command_t response = {0};
@@ -1819,7 +2184,9 @@ static void test_hid_spi_monitor_get_status_returns_bus_payload(void) {
     stub_spi_mode[2] = 2u;
     stub_spi_timeout_us[2] = 1800u;
     stub_spi_packets_emitted[2] = 7u;
+    stub_spi_transactions_emitted[2] = 2u;
     stub_spi_overrun_count[2] = 3u;
+    stub_spi_timeout_close_count[1] = 4u;
     command.opcode = USB_HID_OPCODE_SPI_MONITOR_GET_STATUS;
     command.sequence = 13u;
     command.payload_length = 1u;
@@ -1831,7 +2198,7 @@ static void test_hid_spi_monitor_get_status_returns_bus_payload(void) {
     assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
     assert(response.opcode == USB_HID_OPCODE_SPI_MONITOR_GET_STATUS);
     assert(response.status == USB_HID_STATUS_OK);
-    assert(response.payload_length == 38u);
+    assert(response.payload_length == 50u);
     assert(response.payload[0] == 1u);
     assert(response.payload[1] == 1u);
     assert(response.payload[2] == 1u);
@@ -1841,14 +2208,18 @@ static void test_hid_spi_monitor_get_status_returns_bus_payload(void) {
     assert(response.payload[6] == 0x08u);
     assert(response.payload[7] == 0x07u);
     assert(response.payload[8] == 0x00u);
-    assert(response.payload[9] == 0x00u);
     assert(response.payload[10] == 7u);
-    assert(response.payload[14] == 3u);
-    assert(response.payload[18] == 0u);
+    assert(response.payload[18] == 3u);
     assert(response.payload[22] == 0u);
     assert(response.payload[26] == 0u);
     assert(response.payload[30] == 0u);
     assert(response.payload[34] == 0u);
+    assert(response.payload[38] == 0u);
+    assert(response.payload[42] == 0u);
+    assert(response.payload[46] == 4u);
+    assert(response.payload[47] == 0u);
+    assert(response.payload[48] == 0u);
+    assert(response.payload[49] == 0u);
 }
 
 static void test_hid_spi_monitor_get_all_status_returns_all_channels(void) {
@@ -1917,6 +2288,43 @@ static void test_hid_spi_monitor_get_all_status_rejects_failed_snapshot(void) {
     assert(response.payload_length == 0u);
 }
 
+static void test_hid_spi_monitor_get_status_reports_invalid_bus(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+
+    reset_usb_stub();
+    command.opcode = USB_HID_OPCODE_SPI_MONITOR_GET_STATUS;
+    command.sequence = 18u;
+    command.payload_length = 1u;
+    command.payload[0] = 3u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_SPI_MONITOR_GET_STATUS);
+    assert(response.status == USB_HID_STATUS_BAD_LENGTH);
+    assert(response.payload_length == 0u);
+}
+
+static void test_hid_spi_monitor_get_all_status_reports_busy(void) {
+    usb_hid_command_t command = {0};
+    usb_hid_command_t response = {0};
+
+    reset_usb_stub();
+    stub_spi_monitor_result = SPI_MONITOR_RC_BUSY;
+    command.opcode = USB_HID_OPCODE_SPI_MONITOR_GET_ALL_STATUS;
+    command.sequence = 19u;
+
+    tud_hid_set_report_cb(0u, 0u, HID_REPORT_TYPE_OUTPUT, (uint8_t const *)&command, sizeof(command));
+    usb_hid_poll();
+
+    assert(tud_hid_get_report_cb(0u, 0u, HID_REPORT_TYPE_INPUT, (uint8_t *)&response, sizeof(response)) == sizeof(response));
+    assert(response.opcode == USB_HID_OPCODE_SPI_MONITOR_GET_ALL_STATUS);
+    assert(response.status == USB_HID_STATUS_BUSY);
+    assert(response.payload_length == 0u);
+}
+
 int main(void) {
     test_spi_monitor_bus_config_updates_all_bus_channels();
     test_spi_monitor_allows_different_buses_to_use_different_modes();
@@ -1942,6 +2350,10 @@ int main(void) {
     test_cli_unknown_command_writes_fixed_helper();
     test_cli_help_writes_response_without_connected_flag();
     test_cli_help_is_flushed_after_temporary_tx_backpressure();
+    test_cdc_rx_callback_leaves_remaining_packets_for_later_pass();
+    test_cdc_rx_callback_preserves_packet_tail_when_queue_fills();
+    test_cdc_tx_poll_limits_one_pass_budget();
+    test_cdc_tx_enqueue_failure_is_counted();
     test_cli_version_reports_firmware_version();
     test_cli_led_command_and_hid_led_command_share_action();
     test_cli_reboot_command_uses_system_reboot();
@@ -1964,10 +2376,14 @@ int main(void) {
     test_usb_bulk_poll_stream_drains_trace_packet();
     test_usb_bulk_poll_stream_resumes_partial_trace_packet_write();
     test_usb_bulk_poll_stream_restarts_partial_packet_after_stream_disable();
-    test_usb_bulk_poll_stream_drops_packet_with_invalid_payload_len();
+    test_usb_bulk_poll_stream_clamps_invalid_payload_len();
+    test_usb_bulk_poll_stream_writes_unaligned_whole_packet_tail();
     test_usb_bulk_poll_stream_emits_nothing_when_ring_empty();
-    test_stream_write_uses_partial_vendor_space();
-    test_vendor_write_uses_bulk_in_interface();
+    test_usb_bulk_service_stream_counts_host_backpressure_stalls();
+    test_usb_bulk_service_stream_counts_policy_deferrals();
+    test_usb_bulk_service_stream_uses_partial_vendor_space();
+    test_usb_bulk_service_stream_counts_policy_deferred_bytes();
+    test_usb_bulk_flush_flushes_vendor_endpoint();
     test_hid_builtin_command_returns_status_response();
     test_hid_stream_command_updates_shared_state();
     test_hid_i2c_monitor_set_rate_updates_channel();
@@ -1975,11 +2391,17 @@ int main(void) {
     test_hid_i2c_monitor_get_status_returns_payload();
     test_hid_i2c_monitor_get_all_status_returns_all_channels();
     test_hid_i2c_monitor_get_all_status_rejects_failed_snapshot();
+    test_hid_i2c_monitor_get_status_reports_invalid_channel();
+    test_hid_i2c_monitor_get_all_status_reports_busy();
     test_hid_spi_monitor_set_config_updates_bus();
     test_hid_spi_monitor_set_config_reports_busy();
     test_hid_spi_monitor_get_status_returns_bus_payload();
     test_hid_spi_monitor_get_all_status_returns_all_channels();
     test_hid_spi_monitor_get_all_status_rejects_failed_snapshot();
+    test_hid_spi_monitor_get_status_reports_invalid_bus();
+    test_hid_spi_monitor_get_all_status_reports_busy();
     test_hid_reboot_command_runs_once();
+    test_hid_second_report_is_rejected_without_overwriting_pending_command();
+    test_hid_unknown_opcode_is_counted();
     return 0;
 }

@@ -108,10 +108,11 @@ public sealed class TraceDecoderTests
     public void TraceStreamDecoder_SkipsInvalidPayloadLengthHeader()
     {
         var decoder = new TraceStreamDecoder();
+        var invalidPayloadLength = (ushort)(TraceDecoder.TracePacketPayloadBytes + 1);
         var invalidHeader = new byte[]
         {
             1, 1, 0, 0,
-            113, 0,
+            (byte)(invalidPayloadLength & 0xFF), (byte)(invalidPayloadLength >> 8),
             0, 0,
             1, 0, 0, 0,
             0, 0, 0, 0,
@@ -121,5 +122,53 @@ public sealed class TraceDecoderTests
 
         Assert.AreEqual(0, packets.Count);
         Assert.IsTrue(decoder.BufferedByteCount < invalidHeader.Length);
+    }
+
+    [TestMethod]
+    public void FormatTracePacket_FormatsI2cEventsLikePythonHost()
+    {
+        var packet = new TracePacket(
+            new TracePacketHeader(1, (byte)TraceType.I2C, 4, (byte)TraceFlags.End, 8, 4, 7, 1_234_567),
+            [
+                (byte)I2cEventType.Start, 0x00,
+                (byte)I2cEventType.Data, 0x50,
+                (byte)I2cEventType.Ack, 0x01,
+                (byte)I2cEventType.Stop, 0x00,
+            ]);
+
+        var text = App.TraceStreaming.FormatTracePacket(packet);
+
+        Assert.AreEqual("[00:00:01.234567] seq=     7 I2C CH4: START DATA:50 NACK STOP", text);
+    }
+
+    [TestMethod]
+    public void CanCoalesceSpiPackets_AcceptsContinuedSiblingFragment()
+    {
+        var first = new TracePacket(
+            new TracePacketHeader(1, (byte)TraceType.SPI, 1, 0, 2, (ushort)SpiCaptureMode.Mosi, 9, 100),
+            [0x11, 0x22]);
+        var second = new TracePacket(
+            new TracePacketHeader(1, (byte)TraceType.SPI, 1, (byte)(TraceFlags.Continued | TraceFlags.End), 2, (ushort)SpiCaptureMode.Mosi, 9, 200),
+            [0x33, 0x44]);
+
+        Assert.IsTrue(App.TraceStreaming.CanCoalesceSpiPackets(first, second));
+
+        var merged = App.TraceStreaming.CoalesceSpiPackets(first, second);
+        CollectionAssert.AreEqual(new byte[] { 0x11, 0x22, 0x33, 0x44 }, merged.Payload);
+        Assert.AreEqual(4, merged.Header.PayloadLength);
+        Assert.AreEqual((byte)(TraceFlags.Continued | TraceFlags.End), merged.Header.Flags);
+        Assert.IsTrue(App.TraceStreaming.ShouldFlushImmediately(merged));
+    }
+
+    [TestMethod]
+    public void FormatTracePacket_FormatsSpiCaptureModeLikePythonHost()
+    {
+        var packet = new TracePacket(
+            new TracePacketHeader(1, (byte)TraceType.SPI, 1, (byte)TraceFlags.End, 4, (ushort)SpiCaptureMode.MosiMiso, 9, 200),
+            [0x11, 0x22, 0x33, 0x44]);
+
+        var text = App.TraceStreaming.FormatTracePacket(packet);
+
+        Assert.AreEqual("[00:00:00.000200] seq=     9 SPI CH1 MOSI_MISO 11/22 33/44", text);
     }
 }

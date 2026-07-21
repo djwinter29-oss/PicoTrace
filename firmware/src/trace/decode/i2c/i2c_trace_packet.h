@@ -9,7 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "trace/decode/i2c_decoder.h"
+#include "trace/decode/i2c/i2c_decoder.h"
 #include "trace/trace_packet.h"
 
 /** @brief Serialized byte size of one decoded I2C payload item. */
@@ -41,7 +41,7 @@ typedef bool (*i2c_trace_packet_sink_t)(void *context, const trace_packet_t *pac
 typedef uint32_t (*i2c_trace_packet_timestamp_source_t)(void);
 
 /** @brief Stateful I2C trace-packet assembler carried across decoded events. */
-typedef struct {
+typedef struct i2c_trace_packet_builder {
     trace_packet_t packet; /**< Currently open packet fragment under construction. */
     i2c_trace_packet_sink_t packet_sink; /**< Completed-packet sink used for every emitted fragment. */
     void *packet_sink_context; /**< Caller-owned context passed back to @ref packet_sink. */

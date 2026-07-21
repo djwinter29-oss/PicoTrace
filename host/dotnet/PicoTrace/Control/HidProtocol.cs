@@ -96,7 +96,16 @@ public readonly record struct SpiMonitorStatus(
     byte ChannelSelectMask,
     uint TimeoutUs,
     uint PacketsEmitted,
-    uint OverrunCount);
+    uint TransactionsEmitted,
+    uint OverrunCount,
+    uint SinkOverrunCount,
+    uint SamplerOverrunCount,
+    uint RingDropCount,
+    uint UsbStallCount,
+    uint UsbHostBackpressureStallCount,
+    uint UsbPolicyDeferralCount,
+    uint PeakRingDepthPackets,
+    uint TimeoutCloseCount);
 
 public readonly record struct SpiMonitorAllStatus(
     byte Bus,
@@ -112,7 +121,7 @@ public static class HidProtocol
     public const int DefaultReportSize = 64;
     private const int HidI2cStatusBytes = 18;
     private const int HidI2cAllStatusChannelBytes = 14;
-    private const int HidSpiStatusBytes = 18;
+    private const int HidSpiStatusBytes = 54;
     private const int HidSpiAllStatusChannelBytes = 10;
 
     public static HidResponse DecodeHidResponse(ReadOnlySpan<byte> reportBytes)
@@ -249,7 +258,16 @@ public static class HidProtocol
             payload[5],
             BinaryPrimitives.ReadUInt32LittleEndian(payload[6..10]),
             BinaryPrimitives.ReadUInt32LittleEndian(payload[10..14]),
-            BinaryPrimitives.ReadUInt32LittleEndian(payload[14..18]));
+                BinaryPrimitives.ReadUInt32LittleEndian(payload[14..18]),
+                BinaryPrimitives.ReadUInt32LittleEndian(payload[18..22]),
+                BinaryPrimitives.ReadUInt32LittleEndian(payload[22..26]),
+                BinaryPrimitives.ReadUInt32LittleEndian(payload[26..30]),
+                BinaryPrimitives.ReadUInt32LittleEndian(payload[30..34]),
+                BinaryPrimitives.ReadUInt32LittleEndian(payload[34..38]),
+                BinaryPrimitives.ReadUInt32LittleEndian(payload[38..42]),
+                BinaryPrimitives.ReadUInt32LittleEndian(payload[42..46]),
+                BinaryPrimitives.ReadUInt32LittleEndian(payload[46..50]),
+                BinaryPrimitives.ReadUInt32LittleEndian(payload[50..54]));
     }
 
     public static IReadOnlyList<SpiMonitorAllStatus> DecodeSpiMonitorAllStatusPayload(ReadOnlySpan<byte> payload)

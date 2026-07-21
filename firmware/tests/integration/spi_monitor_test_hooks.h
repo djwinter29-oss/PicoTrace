@@ -23,7 +23,6 @@ bool spi_monitor_test_feed_mosi_miso_samples(
 
 void spi_monitor_test_poll_timeout(uint32_t bus, uint32_t timestamp_us);
 void spi_monitor_test_set_bus_sampler_overrun_counts(uint32_t bus, uint32_t mosi_overruns, uint32_t miso_overruns);
-bool spi_monitor_test_stage_dma_progress(uint32_t bus, const uint32_t *raw_words, uint32_t raw_word_count);
 bool spi_monitor_test_stage_channel_dma_progress(uint32_t channel, const uint32_t *raw_words, uint32_t raw_word_count);
 bool spi_monitor_test_stage_channel_dma_progress_with_boundary(
     uint32_t channel,

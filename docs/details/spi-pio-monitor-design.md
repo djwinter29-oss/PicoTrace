@@ -17,7 +17,7 @@ For the higher-level component view around this design, see:
 
 ## Scope
 
-This design covers the SPI capture implementation scaffold under `firmware/src/trace/capture/`.
+This design covers the SPI capture implementation scaffold under `firmware/src/trace/capture/spi/`.
 
 The current implementation now includes a concrete SPI trace packet contract for the shared ring
 and USB stream path. The design notes below describe that current contract rather than leaving it
@@ -218,6 +218,23 @@ The payload format is currently:
 - MOSI+MISO capture: interleaved byte pairs in transaction order
   - payload byte `0` = MOSI byte `0`
   - payload byte `1` = MISO byte `0`
+
+## Current Sampler Split
+
+The current implementation now uses two different PIO sampler shapes depending on capture mode:
+
+- MOSI-only capture uses a dedicated one-pin sampler that shifts `MOSI` alone and autopushes one
+  byte per observed SPI byte time
+- MOSI+MISO capture keeps the two-pin sampler that shifts `MOSI` and `MISO` together and
+  autopushes one packed raw word per observed SPI byte time
+
+This split keeps the host-visible SPI packet contract unchanged while removing unnecessary two-lane
+ sampling and lane-compaction work from the firmware fast path when the user only requested `MOSI`.
+
+The result is intentional asymmetry:
+
+- MOSI-only mode is optimized for the highest practical throughput ceiling
+- MOSI+MISO mode preserves the existing two-lane aligned sampler and firmware-side decode path
   - payload byte `2` = MOSI byte `1`
   - payload byte `3` = MISO byte `1`
 

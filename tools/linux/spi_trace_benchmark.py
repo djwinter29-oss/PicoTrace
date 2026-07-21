@@ -81,12 +81,15 @@ class TrialResult:
     mosi_bytes: int
     miso_bytes: int | None
     packets_emitted: int
+    transactions_emitted: int
     overrun_count: int
     sink_overrun_count: int
     sampler_overrun_count: int
     ring_drop_count: int
-    usb_stall_count: int
+    usb_host_backpressure_stall_count: int
+    usb_policy_deferral_count: int
     peak_ring_depth_packets: int
+    timeout_close_count: int
     throughput_mbps: float
     window_seconds: float
 
@@ -109,6 +112,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="one or more SPI clock rates in Hz to test",
     )
     parser.add_argument("--device", default="/dev/spidev0.0", help="Linux SPI device path")
+    parser.add_argument(
+        "--firmware-build-dir",
+        default=None,
+        help="firmware build directory to inspect for the configured system clock",
+    )
     parser.add_argument("--spi-mode", type=int, choices=range(4), default=0, help="SPI mode 0-3")
     parser.add_argument("--bits-per-word", type=int, default=8, help="SPI bits per word")
     parser.add_argument("--delay-usecs", type=int, default=0, help="SPI inter-transfer delay in microseconds")
@@ -264,12 +272,15 @@ def collect_stream(config: BenchmarkConfig, marker: bytes, expected: bytes) -> T
             mosi_bytes=len(raw_mosi),
             miso_bytes=len(raw_miso) if config.capture_mode is SpiCaptureMode.MOSI_MISO else None,
             packets_emitted=status.packets_emitted,
+            transactions_emitted=status.transactions_emitted,
             overrun_count=status.overrun_count,
             sink_overrun_count=status.sink_overrun_count,
             sampler_overrun_count=status.sampler_overrun_count,
             ring_drop_count=status.ring_drop_count,
-            usb_stall_count=status.usb_stall_count,
+            usb_host_backpressure_stall_count=status.usb_host_backpressure_stall_count,
+            usb_policy_deferral_count=status.usb_policy_deferral_count,
             peak_ring_depth_packets=status.peak_ring_depth_packets,
+            timeout_close_count=status.timeout_close_count,
             throughput_mbps=throughput_mbps,
             window_seconds=tx_seconds,
         )
@@ -287,12 +298,15 @@ def collect_stream(config: BenchmarkConfig, marker: bytes, expected: bytes) -> T
         mosi_bytes=len(stress_mosi),
         miso_bytes=len(stress_miso) if config.capture_mode is SpiCaptureMode.MOSI_MISO else None,
         packets_emitted=status.packets_emitted,
+        transactions_emitted=status.transactions_emitted,
         overrun_count=status.overrun_count,
         sink_overrun_count=status.sink_overrun_count,
         sampler_overrun_count=status.sampler_overrun_count,
         ring_drop_count=status.ring_drop_count,
-        usb_stall_count=status.usb_stall_count,
+        usb_host_backpressure_stall_count=status.usb_host_backpressure_stall_count,
+        usb_policy_deferral_count=status.usb_policy_deferral_count,
         peak_ring_depth_packets=status.peak_ring_depth_packets,
+        timeout_close_count=status.timeout_close_count,
         throughput_mbps=throughput_mbps,
         window_seconds=tx_seconds,
     )
@@ -307,14 +321,24 @@ def format_trial(index: int, total_bytes: int, capture_mode: SpiCaptureMode, res
         f"trial{index}:{'PASS' if result.ok else 'FAIL'} "
         f"mosi={result.mosi_bytes}/{total_bytes}{miso_text} "
         f"mismatch={result.mismatch} tx={result.throughput_mbps:.2f}Mb/s "
-        f"window={result.window_seconds:.2f}s packets={result.packets_emitted} "
+        f"window={result.window_seconds:.2f}s packets={result.packets_emitted} txns={result.transactions_emitted} "
         f"overruns={result.overrun_count} sink={result.sink_overrun_count} "
         f"sampler={result.sampler_overrun_count} ring={result.ring_drop_count} "
-        f"stalls={result.usb_stall_count} peak={result.peak_ring_depth_packets}"
+        f"host_stalls={result.usb_host_backpressure_stall_count} "
+        f"policy_deferrals={result.usb_policy_deferral_count} peak={result.peak_ring_depth_packets} "
+        f"timeout_closes={result.timeout_close_count}"
     )
 
 
-def current_clock_khz(board: str) -> int | None:
+def current_clock_khz(board: str, firmware_build_dir: str | None) -> int | None:
+    if firmware_build_dir is not None:
+        cache_path = REPO_ROOT / firmware_build_dir / "CMakeCache.txt"
+        if cache_path.is_file():
+            text = cache_path.read_text(encoding="utf-8")
+            match = re.search(r"^PICOTRACE_SYSTEM_CLOCK_KHZ:STRING=(\d+)\s*$", text, re.MULTILINE)
+            if match is not None:
+                return int(match.group(1))
+
     system_h = REPO_ROOT / "firmware" / "src" / "driver" / "system.h"
     text = system_h.read_text(encoding="utf-8")
     match = re.search(
@@ -343,7 +367,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     expected = data_chunk * args.repeat_count
     total_bytes = args.chunk_bytes * args.repeat_count
 
-    clock_khz = current_clock_khz(args.board)
+    clock_khz = current_clock_khz(args.board, args.firmware_build_dir)
     prefix = f"firmware_clock={clock_khz}kHz " if clock_khz is not None else ""
     print(
         f"{prefix}capture={args.capture} chunk_bytes={args.chunk_bytes} "

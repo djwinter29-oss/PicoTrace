@@ -13,19 +13,20 @@ enable_testing()
 
 add_executable(usb_app_test
     ../src/app_control.c
-    app_control_test.c
+    ../src/device_control.c
+    integration/app_control_test.c
     ../src/cli/cli_shell.c
     ../src/cli/device_cli.c
-    spi_monitor_test_hooks.c
-    trace/decode/i2c_decoder_test.c
-    trace/decode/i2c_trace_packet_test.c
-    usb_app_test.c
+    integration/spi_monitor_test_hooks.c
+    integration/trace/decode/i2c_decoder_test.c
+    integration/trace/decode/i2c_trace_packet_test.c
+    integration/usb_app_test.c
     ../src/driver/system.c
-    ../src/trace/capture/i2c_monitor_control.c
-    ../src/trace/capture/spi_monitor.c
-    ../src/trace/capture/spi_monitor_control.c
-    ../src/trace/decode/i2c_decoder.c
-    ../src/trace/decode/i2c_trace_packet.c
+    ../src/trace/capture/i2c/i2c_monitor_control.c
+    ../src/trace/capture/spi/spi_monitor.c
+    ../src/trace/capture/spi/spi_monitor_control.c
+    ../src/trace/decode/i2c/i2c_decoder.c
+    ../src/trace/decode/i2c/i2c_trace_packet.c
     ../src/trace/trace_ring.c
     ../src/usb/usb_bulk.c
     ../src/usb/usb_cdc.c
@@ -34,17 +35,17 @@ add_executable(usb_app_test
 
 add_executable(i2c_monitor_runtime_test
     ../src/app_control.c
-    i2c_monitor_runtime_test.c
-    i2c_monitor_test_bridge.c
-    ../src/trace/decode/i2c_decoder.c
-    ../src/trace/decode/i2c_trace_packet.c
+    integration/i2c_monitor_runtime_test.c
+    integration/i2c_monitor_test_bridge.c
+    ../src/trace/decode/i2c/i2c_decoder.c
+    ../src/trace/decode/i2c/i2c_trace_packet.c
     ../src/trace/trace_ring.c
 )
 
 target_include_directories(usb_app_test
     PRIVATE
-        .
-    stubs
+        integration
+        integration/stubs
         ../src
         ../src/config
 )
@@ -53,8 +54,8 @@ target_include_directories(usb_app_test
 
 target_include_directories(i2c_monitor_runtime_test
     PRIVATE
-        .
-    stubs
+        integration
+        integration/stubs
         ../src
         ../src/config
 )

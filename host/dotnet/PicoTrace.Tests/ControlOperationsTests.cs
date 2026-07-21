@@ -20,7 +20,16 @@ public sealed class ControlOperationsTests
             ChannelSelectMask: 0x01,
             TimeoutUs: 50,
             PacketsEmitted: 0,
-            OverrunCount: 0);
+            TransactionsEmitted: 0,
+            OverrunCount: 0,
+            SinkOverrunCount: 0,
+            SamplerOverrunCount: 0,
+            RingDropCount: 0,
+            UsbStallCount: 0,
+            UsbHostBackpressureStallCount: 0,
+            UsbPolicyDeferralCount: 0,
+            PeakRingDepthPackets: 0,
+            TimeoutCloseCount: 0);
 
         var apply = ControlOperations.BuildSpiApplyConfig(4, SpiCaptureMode.MosiMiso, 3, 250, currentStatus);
 
@@ -43,7 +52,16 @@ public sealed class ControlOperationsTests
             ChannelSelectMask: 0x03,
             TimeoutUs: 100,
             PacketsEmitted: 0,
-            OverrunCount: 0);
+            TransactionsEmitted: 0,
+            OverrunCount: 0,
+            SinkOverrunCount: 0,
+            SamplerOverrunCount: 0,
+            RingDropCount: 0,
+            UsbStallCount: 0,
+            UsbHostBackpressureStallCount: 0,
+            UsbPolicyDeferralCount: 0,
+            PeakRingDepthPackets: 0,
+            TimeoutCloseCount: 0);
 
         var stop = ControlOperations.BuildSpiStopConfig(3, currentStatus);
 
@@ -66,7 +84,16 @@ public sealed class ControlOperationsTests
             ChannelSelectMask: 0x01,
             TimeoutUs: 20,
             PacketsEmitted: 0,
-            OverrunCount: 0);
+            TransactionsEmitted: 0,
+            OverrunCount: 0,
+            SinkOverrunCount: 0,
+            SamplerOverrunCount: 0,
+            RingDropCount: 0,
+            UsbStallCount: 0,
+            UsbHostBackpressureStallCount: 0,
+            UsbPolicyDeferralCount: 0,
+            PeakRingDepthPackets: 0,
+            TimeoutCloseCount: 0);
 
         var stop = ControlOperations.BuildSpiStopConfig(0, currentStatus);
 
@@ -75,5 +102,17 @@ public sealed class ControlOperationsTests
         Assert.AreEqual(0, stop.SpiMode);
         Assert.AreEqual(0, stop.ChannelSelectMask);
         Assert.AreEqual((uint)0, stop.TimeoutUs);
+    }
+
+    [TestMethod]
+    public void BuildSpiApplyConfig_StartsWithSingleChannelMaskWhenNoCurrentStatusExists()
+    {
+        var apply = ControlOperations.BuildSpiApplyConfig(4, SpiCaptureMode.MosiMiso, 3, 250, null);
+
+        Assert.AreEqual(1, apply.Bus);
+        Assert.AreEqual(SpiCaptureMode.MosiMiso, apply.Capture);
+        Assert.AreEqual(3, apply.SpiMode);
+        Assert.AreEqual(0x02, apply.ChannelSelectMask);
+        Assert.AreEqual((uint)250, apply.TimeoutUs);
     }
 }

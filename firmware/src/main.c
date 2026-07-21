@@ -13,10 +13,10 @@
 #include "cli/device_cli.h"
 #include "driver/led.h"
 #include "driver/system.h"
-#include "trace/capture/i2c_monitor.h"
-#include "trace/capture/i2c_monitor_control.h"
-#include "trace/capture/spi_monitor.h"
-#include "trace/capture/spi_monitor_control.h"
+#include "trace/capture/i2c/i2c_monitor.h"
+#include "trace/capture/i2c/i2c_monitor_control.h"
+#include "trace/capture/spi/spi_monitor.h"
+#include "trace/capture/spi/spi_monitor_control.h"
 #include "trace/trace_ring.h"
 #include "usb/usb_bulk.h"
 #include "usb/usb_cdc.h"
@@ -117,14 +117,12 @@ int main(void) {
         usb_hid_poll();
 
         if (tud_ready()) {
-            bool stream_flushed = false;
+            bool stream_wrote_any = false;
 
             for (uint32_t pass = 0u; pass < STREAM_SERVICE_PASSES; ++pass) {
-                bool stream_progress = usb_bulk_poll_stream(app_control_stream_enabled());
-                if (stream_progress) {
-                    usb_bulk_flush();
-                    stream_flushed = true;
-                }
+                bool stream_progress = usb_bulk_service_stream(app_control_stream_enabled());
+
+                stream_wrote_any = stream_wrote_any || stream_progress;
 
                 /* Interleave control-path flushing with stream writes to avoid CDC starvation. */
                 usb_cdc_poll_tx();
@@ -135,7 +133,7 @@ int main(void) {
                 }
             }
 
-            if (app_control_stream_enabled() && !stream_flushed) {
+            if (stream_wrote_any) {
                 usb_bulk_flush();
             }
         }

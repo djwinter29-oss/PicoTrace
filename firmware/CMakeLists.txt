@@ -4,6 +4,7 @@ include(pico_sdk_import.cmake)
 
 set(PICO_BOARD "pico" CACHE STRING "Pico SDK board target")
 set(PICOTRACE_FIRMWARE_VERSION "dev" CACHE STRING "Firmware version string exposed over CLI and HID")
+set(PICOTRACE_SYSTEM_CLOCK_KHZ "" CACHE STRING "Optional system clock target override in kHz")
 
 project(PicoTrace C CXX ASM)
 
@@ -14,17 +15,18 @@ pico_sdk_init()
 
 add_executable(picotrace
     src/app_control.c
+    src/device_control.c
     src/cli/cli_shell.c
     src/cli/device_cli.c
     src/main.c
     src/driver/led.c
     src/driver/system.c
-    src/trace/decode/i2c_decoder.c
-    src/trace/decode/i2c_trace_packet.c
-    src/trace/capture/i2c_monitor.c
-    src/trace/capture/i2c_monitor_control.c
-    src/trace/capture/spi_monitor.c
-    src/trace/capture/spi_monitor_control.c
+    src/trace/decode/i2c/i2c_decoder.c
+    src/trace/decode/i2c/i2c_trace_packet.c
+    src/trace/capture/i2c/i2c_monitor.c
+    src/trace/capture/i2c/i2c_monitor_control.c
+    src/trace/capture/spi/spi_monitor.c
+    src/trace/capture/spi/spi_monitor_control.c
     src/trace/trace_ring.c
     src/usb/usb_bulk.c
     src/usb/usb_cdc.c
@@ -52,9 +54,12 @@ target_link_libraries(picotrace
 )
 
 target_compile_definitions(picotrace PRIVATE PICOTRACE_FIRMWARE_VERSION="${PICOTRACE_FIRMWARE_VERSION}")
+if (NOT PICOTRACE_SYSTEM_CLOCK_KHZ STREQUAL "")
+    target_compile_definitions(picotrace PRIVATE SYSTEM_CLOCK=${PICOTRACE_SYSTEM_CLOCK_KHZ}u)
+endif ()
 
-pico_generate_pio_header(picotrace ${CMAKE_CURRENT_LIST_DIR}/src/trace/capture/i2c_monitor.pio)
-pico_generate_pio_header(picotrace ${CMAKE_CURRENT_LIST_DIR}/src/trace/capture/spi_monitor.pio)
+pico_generate_pio_header(picotrace ${CMAKE_CURRENT_LIST_DIR}/src/trace/capture/i2c/i2c_monitor.pio)
+pico_generate_pio_header(picotrace ${CMAKE_CURRENT_LIST_DIR}/src/trace/capture/spi/spi_monitor.pio)
 
 if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(picotrace PRIVATE

@@ -14,10 +14,12 @@
 #endif
 
 /** @brief Nominal system clock target in kHz for the current board family. */
+#ifndef SYSTEM_CLOCK
 #if defined(PICO_RP2350A) || defined(PICO_RP2350B)
-#define SYSTEM_CLOCK 150000u
+#define SYSTEM_CLOCK 300000u
 #else
 #define SYSTEM_CLOCK 250000u
+#endif
 #endif
 
 /** @brief Configure the board system clock for the PicoTrace firmware runtime. */

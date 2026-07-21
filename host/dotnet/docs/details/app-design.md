@@ -67,8 +67,8 @@ Configuration flow:
 
 1. the user selects a CLI action or subcommand
 2. the app opens a short-lived `HidControlClient`
-3. the app sends the corresponding HID control request
-4. the app enables trace streaming if configuration succeeds
+3. the app enables trace streaming before applying a non-zero monitor configuration
+4. the app sends the corresponding HID control request
 5. the app starts foreground streaming for the selected logical channel unless `--no-stream` was requested
 
 Streaming flow:

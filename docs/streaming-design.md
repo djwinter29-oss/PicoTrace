@@ -45,7 +45,7 @@ emit placeholder vendor traffic when no trace packets are queued.
 
 The current firmware now keeps the consumer side directly in `firmware/src/usb/usb_bulk.c`:
 
-- `usb_bulk_poll_stream()` drains completed `trace_packet_t` records from the trace ring
+- `usb_bulk_service_stream()` drains completed `trace_packet_t` records from the trace ring and flushes the vendor endpoint
 - partial USB writes retain the peeked ring slot until the full logical packet has been sent
 - disabling stream discards any partially transmitted logical packet so the next enable restarts from a clean packet boundary
 - no vendor data is emitted when the ring is empty
@@ -66,7 +66,7 @@ The current I2C monitor scaffold now establishes the capture-side buffer boundar
 
 - one PIO state machine per I2C channel
 - one DMA channel per sampler
-- ping-pong word buffers per channel
+- staged word buffers per channel
 - DMA IRQ decode and packetization on the producer core before queueing into the trace ring
 
 ## Packet-oriented trace queues
@@ -81,7 +81,7 @@ The current trace queue implementation lives under `firmware/src/trace/` and use
 packet made of a fixed header plus payload.
 
 For the implementation-level design of that queue, see `docs/details/trace-ring-buffer-design.md`.
-For the producer-side PIO sampler and DMA ping-pong buffer boundary that now feeds raw sample
+For the producer-side PIO sampler and DMA staged-buffer boundary that now feeds raw sample
 fragments into that queue, see `docs/details/i2c-pio-sampler-design.md`.
 For the planned SPI capture-side monitor contract and clock-driven packet boundary rules, see
 `docs/details/spi-pio-monitor-design.md`.

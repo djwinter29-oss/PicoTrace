@@ -95,6 +95,18 @@ sudo i2cdetect -y 1
 
 This produces address-probe traffic on `I2C1`.
 
+If you want a repo-local helper that configures the PicoTrace I2C monitor over the board CDC CLI,
+runs one `i2cdetect -y 1` scan, and checks that the trace contains the expected `112`
+transactions:
+
+```bash
+./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112
+```
+
+The `sample_hz` value is the PicoTrace I2C sampler rate passed to the board-local `i2cmon`
+command, not the Linux bus speed. Older live firmware builds may only accept sampler rates such as
+`4000000`, `8000000`, or `12000000`.
+
 ```bash
 sudo i2ctransfer -y 1 w3@0x50 0x00 0xAA 0x55
 ```
@@ -107,6 +119,17 @@ sudo i2ctransfer -y 1 w1@0x50 0x00 r4
 
 This produces a combined write-then-read transaction and is useful for exercising repeated-start
 behavior.
+
+For a heavier repo-local stress pass that repeatedly generates that repeated-start pattern while
+collecting PicoTrace output, run:
+
+```bash
+./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --workload combined-burst --target-address 0x50 --read-length 4 --repeat-count 64 --expect-transactions 0
+```
+
+That stress mode skips transaction-count matching by default and instead focuses on whether the
+trace shows the expected repeated-start shape (`2` starts per completed stop) and avoids monitor
+overruns under a denser repeated-start workload.
 
 If no target device is present at the selected address, the Raspberry Pi can still generate
 observable address and clock traffic, but the transaction may end with a NACK.

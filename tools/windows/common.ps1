@@ -16,6 +16,32 @@ function Get-RepoRoot {
     Resolve-Path (Join-Path $PSScriptRoot "../..")
 }
 
+function Get-DefaultFirmwareBuildDir {
+    param(
+        [string]$Board = "pico"
+    )
+
+    "build/firmware-$Board"
+}
+
+function Get-DefaultOpenOcdTarget {
+    param(
+        [string]$Board = "pico"
+    )
+
+    switch -Wildcard ($Board) {
+        "pico" { return "target/rp2040.cfg" }
+        "pico_*" { return "target/rp2040.cfg" }
+        "pico2" { return "target/rp2350.cfg" }
+        "pico2*" { return "target/rp2350.cfg" }
+        "rp2040*" { return "target/rp2040.cfg" }
+        "rp2350*" { return "target/rp2350.cfg" }
+        default {
+            throw "No default OpenOCD target is defined for board '$Board'. Pass -OpenOcdTarget or set PICO_OPENOCD_TARGET."
+        }
+    }
+}
+
 function Import-RepoWindowsEnvironment {
     if ($script:RepoWindowsEnvLoaded) {
         return

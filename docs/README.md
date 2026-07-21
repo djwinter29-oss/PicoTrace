@@ -32,7 +32,9 @@ These documents explain broader cross-cutting runtime behavior.
 
 ## Benchmark Notes
 
-- [rp2040-benchmark.md](rp2040-benchmark.md): current RP2040 benchmark method, reference results, and how to run the reusable SPI benchmark script
+- [testlog/rp2040-benchmark-baseline.md](testlog/rp2040-benchmark-baseline.md): current RP2040 benchmark baseline, reference results, and reusable benchmark guidance
+- [testlog/rp2040-benchmark-testlog.md](testlog/rp2040-benchmark-testlog.md): dated RP2040 benchmark and I2C validation log, intentionally empty until real test runs are recorded
+- [testlog/rp2040-benchmark-testlog-template.md](testlog/rp2040-benchmark-testlog-template.md): template for new RP2040 dated test-log entries
 
 ## Hardware And Bench Setup
 

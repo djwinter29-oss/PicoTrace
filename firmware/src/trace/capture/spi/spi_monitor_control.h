@@ -9,7 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "trace/capture/spi_monitor.h"
+#include "trace/capture/spi/spi_monitor.h"
 
 /** @brief Producer-core executor signature for SPI monitor bus configuration changes. */
 typedef spi_monitor_rc_t (*spi_monitor_control_set_bus_fn)(

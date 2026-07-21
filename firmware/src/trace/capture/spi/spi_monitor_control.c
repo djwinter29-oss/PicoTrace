@@ -3,7 +3,7 @@
  * @brief Blocking command bridge for producer-core-owned SPI monitor control.
  */
 
-#include "trace/capture/spi_monitor_control.h"
+#include "trace/capture/spi/spi_monitor_control.h"
 
 #include <string.h>
 
@@ -106,6 +106,30 @@ static bool spi_monitor_control_wait_until_idle(void) {
     }
 }
 
+/** @brief Submit the staged mailbox request and wait for the producer core to complete it. */
+static spi_monitor_rc_t spi_monitor_control_submit_and_wait(void) {
+    uint32_t wait_spins;
+
+    if (!spi_monitor_control_wait_until_idle()) {
+        return SPI_MONITOR_RC_BUSY;
+    }
+
+    spi_monitor_control_store_state(SPI_MONITOR_CONTROL_STATE_PENDING);
+
+    wait_spins = SPI_MONITOR_CONTROL_WAIT_SPINS;
+    while (spi_monitor_control_load_state() != SPI_MONITOR_CONTROL_STATE_COMPLETE) {
+        if (wait_spins == 0u) {
+            return SPI_MONITOR_RC_BUSY;
+        }
+
+        wait_spins -= 1u;
+        spi_monitor_control_wait_hint();
+    }
+
+    spi_monitor_control_store_state(SPI_MONITOR_CONTROL_STATE_IDLE);
+    return g_spi_monitor_control_mailbox.result;
+}
+
 /** @copydoc spi_monitor_control_init */
 void spi_monitor_control_init(void) {
     memset(&g_spi_monitor_control_mailbox, 0, sizeof(g_spi_monitor_control_mailbox));
@@ -133,8 +157,6 @@ void spi_monitor_control_set_inline_mode(bool enabled) {
 
 /** @copydoc spi_monitor_control_set_bus_config */
 spi_monitor_rc_t spi_monitor_control_set_bus_config(uint32_t bus, const spi_monitor_bus_config_t *config) {
-    uint32_t wait_spins;
-
     if (g_spi_monitor_control_inline_mode) {
         if ((g_spi_monitor_control_set_bus_fn == NULL) || (config == NULL)) {
             return SPI_MONITOR_RC_INVALID;
@@ -154,25 +176,12 @@ spi_monitor_rc_t spi_monitor_control_set_bus_config(uint32_t bus, const spi_moni
     g_spi_monitor_control_mailbox.command = SPI_MONITOR_CONTROL_COMMAND_SET_CONFIG;
     g_spi_monitor_control_mailbox.bus = bus;
     g_spi_monitor_control_mailbox.config = *config;
-    spi_monitor_control_store_state(SPI_MONITOR_CONTROL_STATE_PENDING);
-
-    wait_spins = SPI_MONITOR_CONTROL_WAIT_SPINS;
-    while (spi_monitor_control_load_state() != SPI_MONITOR_CONTROL_STATE_COMPLETE) {
-        if (wait_spins == 0u) {
-            return SPI_MONITOR_RC_BUSY;
-        }
-
-        wait_spins -= 1u;
-        spi_monitor_control_wait_hint();
-    }
-
-    spi_monitor_control_store_state(SPI_MONITOR_CONTROL_STATE_IDLE);
-    return g_spi_monitor_control_mailbox.result;
+    return spi_monitor_control_submit_and_wait();
 }
 
 /** @copydoc spi_monitor_control_get_bus_status */
 spi_monitor_rc_t spi_monitor_control_get_bus_status(uint32_t bus, spi_monitor_bus_status_t *status_out) {
-    uint32_t wait_spins;
+    spi_monitor_rc_t result;
 
     if (g_spi_monitor_control_inline_mode) {
         if ((g_spi_monitor_control_get_bus_status_fn == NULL) || (status_out == NULL)) {
@@ -186,32 +195,20 @@ spi_monitor_rc_t spi_monitor_control_get_bus_status(uint32_t bus, spi_monitor_bu
         return SPI_MONITOR_RC_INVALID;
     }
 
-    if (!spi_monitor_control_wait_until_idle()) {
-        return SPI_MONITOR_RC_BUSY;
-    }
-
     g_spi_monitor_control_mailbox.command = SPI_MONITOR_CONTROL_COMMAND_GET_STATUS;
     g_spi_monitor_control_mailbox.bus = bus;
-    spi_monitor_control_store_state(SPI_MONITOR_CONTROL_STATE_PENDING);
-
-    wait_spins = SPI_MONITOR_CONTROL_WAIT_SPINS;
-    while (spi_monitor_control_load_state() != SPI_MONITOR_CONTROL_STATE_COMPLETE) {
-        if (wait_spins == 0u) {
-            return SPI_MONITOR_RC_BUSY;
-        }
-
-        wait_spins -= 1u;
-        spi_monitor_control_wait_hint();
+    result = spi_monitor_control_submit_and_wait();
+    if (result != SPI_MONITOR_RC_OK) {
+        return result;
     }
 
     *status_out = g_spi_monitor_control_mailbox.bus_status;
-    spi_monitor_control_store_state(SPI_MONITOR_CONTROL_STATE_IDLE);
-    return g_spi_monitor_control_mailbox.result;
+    return result;
 }
 
 /** @copydoc spi_monitor_control_get_all_status */
 spi_monitor_rc_t spi_monitor_control_get_all_status(spi_monitor_channel_status_t *status_out) {
-    uint32_t wait_spins;
+    spi_monitor_rc_t result;
 
     if (g_spi_monitor_control_inline_mode) {
         if ((g_spi_monitor_control_get_all_status_fn == NULL) || (status_out == NULL)) {
@@ -225,21 +222,10 @@ spi_monitor_rc_t spi_monitor_control_get_all_status(spi_monitor_channel_status_t
         return SPI_MONITOR_RC_INVALID;
     }
 
-    if (!spi_monitor_control_wait_until_idle()) {
-        return SPI_MONITOR_RC_BUSY;
-    }
-
     g_spi_monitor_control_mailbox.command = SPI_MONITOR_CONTROL_COMMAND_GET_ALL_STATUS;
-    spi_monitor_control_store_state(SPI_MONITOR_CONTROL_STATE_PENDING);
-
-    wait_spins = SPI_MONITOR_CONTROL_WAIT_SPINS;
-    while (spi_monitor_control_load_state() != SPI_MONITOR_CONTROL_STATE_COMPLETE) {
-        if (wait_spins == 0u) {
-            return SPI_MONITOR_RC_BUSY;
-        }
-
-        wait_spins -= 1u;
-        spi_monitor_control_wait_hint();
+    result = spi_monitor_control_submit_and_wait();
+    if (result != SPI_MONITOR_RC_OK) {
+        return result;
     }
 
     memcpy(
@@ -247,8 +233,7 @@ spi_monitor_rc_t spi_monitor_control_get_all_status(spi_monitor_channel_status_t
         g_spi_monitor_control_mailbox.channel_status,
         SPI_MONITOR_CHANNEL_COUNT * sizeof(g_spi_monitor_control_mailbox.channel_status[0])
     );
-    spi_monitor_control_store_state(SPI_MONITOR_CONTROL_STATE_IDLE);
-    return g_spi_monitor_control_mailbox.result;
+    return result;
 }
 
 /** @copydoc spi_monitor_control_poll */

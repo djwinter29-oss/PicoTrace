@@ -3,7 +3,7 @@
  * @brief Helpers for packing decoded I2C events into fixed trace packets.
  */
 
-#include "trace/decode/i2c_trace_packet.h"
+#include "trace/decode/i2c/i2c_trace_packet.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -23,18 +23,19 @@ static void i2c_trace_packet_builder_reset_open_packet(i2c_trace_packet_builder_
  * @param builder Caller-owned packet builder state.
  */
 static void i2c_trace_packet_builder_begin_packet(i2c_trace_packet_builder_t *builder) {
+    uint8_t flags = builder->pending_flags;
+
+    if (builder->transaction_fragmented) {
+        flags |= TRACE_FLAG_CONTINUED;
+    }
+
     builder->packet.header.version = TRACE_PACKET_VERSION;
     builder->packet.header.type = TRACE_TYPE_I2C;
     builder->packet.header.channel = builder->logical_channel;
-    builder->packet.header.flags = builder->pending_flags;
-    builder->packet.header.payload_len = 0u;
-    builder->packet.header.meta = 0u;
+    builder->packet.header.flags = flags;
     builder->packet.header.sequence = ++builder->emitted_packets;
     builder->packet.header.timestamp_us =
         (builder->timestamp_source != NULL) ? builder->timestamp_source() : 0u;
-    if (builder->transaction_fragmented) {
-        builder->packet.header.flags |= TRACE_FLAG_CONTINUED;
-    }
     builder->pending_flags = 0u;
     builder->packet_open = true;
 }
@@ -92,7 +93,6 @@ void i2c_trace_packet_builder_discard(i2c_trace_packet_builder_t *builder) {
         return;
     }
 
-    memset(&builder->packet, 0, sizeof(builder->packet));
     builder->transaction_fragmented = false;
     i2c_trace_packet_builder_reset_open_packet(builder);
 }

@@ -106,8 +106,9 @@ For repeatable end-to-end SPI throughput checks on Linux, use:
 ./.venv/bin/python tools/linux/spi_trace_benchmark.py --capture mosi --speed-hz 11500000 12000000
 ```
 
-See [docs/rp2040-benchmark.md](docs/rp2040-benchmark.md) for the benchmark method, current RP2040
-reference results, and example `MOSI` and `MOSI+MISO` runs.
+See [docs/testlog/rp2040-benchmark-baseline.md](docs/testlog/rp2040-benchmark-baseline.md) for the benchmark method, current RP2040
+reference results, and example `MOSI` and `MOSI+MISO` runs. Use [docs/testlog/rp2040-benchmark-testlog.md](docs/testlog/rp2040-benchmark-testlog.md)
+for dated run results and [docs/testlog/rp2040-benchmark-testlog-template.md](docs/testlog/rp2040-benchmark-testlog-template.md) for the log format.
 
 On Linux, `./tools/linux/load.sh` now performs a best-effort CDC `reboot` after SWD programming and
 waits for the USB CDC device to disconnect and re-enumerate before returning. This leaves the board

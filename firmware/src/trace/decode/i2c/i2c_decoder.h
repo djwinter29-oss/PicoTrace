@@ -1,6 +1,6 @@
 /**
  * @file i2c_decoder.h
- * @brief Decoder for oversampled I2C raw buffers captured by the sampler ping-pong DMA path.
+ * @brief Decoder for oversampled I2C raw buffers captured by the sampler DMA staging path.
  */
 
 #ifndef I2C_DECODER_H
@@ -8,6 +8,9 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+
+struct i2c_trace_packet_builder;
+typedef struct i2c_trace_packet_builder i2c_trace_packet_builder_t;
 
 /** @brief Decoded I2C event types emitted from one oversampled raw buffer. */
 typedef enum {
@@ -34,7 +37,7 @@ typedef enum {
     I2C_DECODER_RESULT_SINK_REJECTED = 2u, /**< Buffer was fully consumed, but the sink rejected at least one event. */
 } i2c_decoder_result_t;
 
-/** @brief Caller-owned decode state carried across consecutive ping-pong buffers. */
+/** @brief Caller-owned decode state carried across consecutive raw DMA buffers. */
 typedef struct {
     bool have_previous_levels; /**< Indicates whether the decoder already has one previous sampled SDA/SCL level pair. */
     bool previous_sda; /**< Previously observed SDA level for edge detection across sample boundaries. */
@@ -78,6 +81,22 @@ i2c_decoder_result_t i2c_decoder_process_buffer(
     uint32_t raw_word_count,
     i2c_decoder_event_sink_t event_sink,
     void *event_sink_context
+);
+
+/**
+ * @brief Walk one completed oversampled raw buffer and append decoded I2C events directly into one packet builder.
+ * @param state Caller-owned decode state carried across buffers.
+ * @param raw_words Packed 32-bit raw sample words, each containing 16 two-bit SDA/SCL samples.
+ * @param raw_word_count Number of valid entries in @p raw_words.
+ * @param builder Caller-owned packet builder that receives decoded events directly.
+ * @return Decode result describing whether the input was invalid, all emitted events were accepted,
+ * or the packet builder rejected one of the emitted events.
+ */
+i2c_decoder_result_t i2c_decoder_process_buffer_into_builder(
+    i2c_decoder_state_t *state,
+    const uint32_t *raw_words,
+    uint32_t raw_word_count,
+    i2c_trace_packet_builder_t *builder
 );
 
 #endif
