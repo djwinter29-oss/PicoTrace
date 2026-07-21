@@ -1,5 +1,6 @@
 param(
-    [string]$FirmwareBuildDir = "build/firmware",
+    [string]$Board = "pico",
+    [string]$FirmwareBuildDir = "",
     [string]$TestBuildDir = "build/tests",
     [switch]$SkipFirmwareBuild
 )
@@ -14,12 +15,16 @@ Push-Location $repoRoot
 try {
     Initialize-BuildEnvironment
 
+    if (-not $FirmwareBuildDir) {
+        $FirmwareBuildDir = Get-DefaultFirmwareBuildDir -Board $Board
+    }
+
     if (-not $SkipFirmwareBuild) {
         if (-not $env:PICO_SDK_PATH) {
             throw "PICO_SDK_PATH is not set. Export it in your shell or set it in tools/windows/.env.ps1, or pass -SkipFirmwareBuild to run only the host-side tests."
         }
 
-        Invoke-NativeCommand "Firmware configure" { cmake -S firmware -B $FirmwareBuildDir }
+        Invoke-NativeCommand "Firmware configure" { cmake -S firmware -B $FirmwareBuildDir -DPICO_BOARD=$Board }
         Invoke-NativeCommand "Firmware build" { cmake --build $FirmwareBuildDir --config Debug }
     }
 

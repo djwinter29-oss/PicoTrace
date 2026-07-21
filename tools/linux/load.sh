@@ -8,13 +8,17 @@ adapter_speed_khz="${PICO_DEBUG_PROBE_SPEED_KHZ:-5000}"
 openocd_target="${PICO_OPENOCD_TARGET:-${OPENOCD_TARGET:-}}"
 skip_build=0
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${script_dir}/common.sh"
+
 usage() {
     cat <<'EOF'
 Usage:
   ./tools/linux/load.sh [firmware_build_dir] [unused] [board]
-  ./tools/linux/load.sh [--board pico|pico2] [--firmware-build-dir DIR] [--openocd-target FILE]
+    ./tools/linux/load.sh [--board BOARD] [--firmware-build-dir DIR] [--openocd-target FILE]
                         [--openocd-exe EXE] [--adapter-speed-khz KHZ] [--skip-build]
-    ./tools/linux/load.sh [-Board pico|pico2] [-board pico|pico2]
+        ./tools/linux/load.sh [-Board BOARD] [-board BOARD]
 EOF
 }
 
@@ -70,18 +74,13 @@ if [[ ${#positionals[@]} -ge 3 && "${board}" == "pico" ]]; then
 fi
 
 if [[ -z "${firmware_build_dir}" ]]; then
-    firmware_build_dir="build/firmware-${board}"
+    firmware_build_dir="$(picotrace_default_firmware_build_dir "${board}")"
 fi
 
 if [[ -z "${openocd_target}" ]]; then
-    if [[ "${board}" == pico2* ]]; then
-        openocd_target="target/rp2350.cfg"
-    else
-        openocd_target="target/rp2040.cfg"
-    fi
+    openocd_target="$(picotrace_default_openocd_target "${board}")"
 fi
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
 linux_env_file="${script_dir}/.env.sh"
 elf_path="${repo_root}/${firmware_build_dir}/picotrace.elf"
@@ -92,6 +91,19 @@ if [[ -f "${linux_env_file}" ]]; then
 fi
 
 cd "${repo_root}"
+
+print_openocd_log() {
+    local log_path="$1"
+
+    if grep -q '\*\* Verified OK \*\*' "${log_path}" \
+        && grep -q 'Error: Failed to select multidrop rp2040\.dap1' "${log_path}"; then
+        grep -v 'Error: Failed to select multidrop rp2040\.dap1' "${log_path}"
+        printf 'Note: ignoring OpenOCD post-reset rp2040.dap1 multidrop selection noise after successful verify.\n'
+        return 0
+    fi
+
+    cat "${log_path}"
+}
 
 run_openocd() {
     local openocd_log
@@ -105,12 +117,12 @@ run_openocd() {
     )
 
     if "${openocd_command[@]}" >"${openocd_log}" 2>&1; then
-        cat "${openocd_log}"
+        print_openocd_log "${openocd_log}"
         rm -f "${openocd_log}"
         return 0
     fi
 
-    cat "${openocd_log}"
+    print_openocd_log "${openocd_log}"
 
     if grep -q 'Access denied (insufficient permissions)' "${openocd_log}" && command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
         printf 'Retrying OpenOCD with sudo because the Debug Probe USB device is not writable by the current user.\n' >&2

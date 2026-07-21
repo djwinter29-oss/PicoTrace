@@ -3,14 +3,17 @@ set -euo pipefail
 
 board="pico"
 firmware_build_dir=""
-test_build_dir="build/tests"
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${script_dir}/common.sh"
 
 usage() {
 	cat <<'EOF'
 Usage:
-  ./tools/linux/build.sh [firmware_build_dir] [test_build_dir] [board]
-	./tools/linux/build.sh [--board pico|pico2] [--firmware-build-dir DIR] [--test-build-dir DIR]
-	./tools/linux/build.sh [-Board pico|pico2] [-board pico|pico2]
+  ./tools/linux/build.sh [firmware_build_dir] [board]
+	./tools/linux/build.sh [--board BOARD] [--firmware-build-dir DIR]
+	./tools/linux/build.sh [-Board BOARD] [-board BOARD]
 EOF
 }
 
@@ -23,10 +26,6 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--firmware-build-dir)
 			firmware_build_dir="$2"
-			shift 2
-			;;
-		--test-build-dir)
-			test_build_dir="$2"
 			shift 2
 			;;
 		--help|-h)
@@ -49,19 +48,14 @@ if [[ ${#positionals[@]} -ge 1 && -z "${firmware_build_dir}" ]]; then
 	firmware_build_dir="${positionals[0]}"
 fi
 
-if [[ ${#positionals[@]} -ge 2 && "${test_build_dir}" == "build/tests" ]]; then
-	test_build_dir="${positionals[1]}"
-fi
-
-if [[ ${#positionals[@]} -ge 3 && "${board}" == "pico" ]]; then
-	board="${positionals[2]}"
+if [[ ${#positionals[@]} -ge 2 && "${board}" == "pico" ]]; then
+	board="${positionals[1]}"
 fi
 
 if [[ -z "${firmware_build_dir}" ]]; then
-	firmware_build_dir="build/firmware-${board}"
+	firmware_build_dir="$(picotrace_default_firmware_build_dir "${board}")"
 fi
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
 linux_env_file="${script_dir}/.env.sh"
 
@@ -74,6 +68,3 @@ cd "${repo_root}"
 
 cmake -S firmware -B "${firmware_build_dir}" -DPICO_BOARD="${board}"
 cmake --build "${firmware_build_dir}"
-
-cmake -S firmware/tests -B "${test_build_dir}"
-cmake --build "${test_build_dir}"

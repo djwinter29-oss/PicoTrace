@@ -18,7 +18,7 @@ try {
     Import-RepoWindowsEnvironment
 
     if (-not $FirmwareBuildDir) {
-        $FirmwareBuildDir = "build/firmware-$Board"
+        $FirmwareBuildDir = Get-DefaultFirmwareBuildDir -Board $Board
     }
 
     $elfPath = Join-Path $repoRoot "$FirmwareBuildDir/picotrace.elf"
@@ -31,11 +31,8 @@ try {
         if ($env:PICO_OPENOCD_TARGET) {
             $OpenOcdTarget = $env:PICO_OPENOCD_TARGET
         }
-        elseif ($Board -like "pico2*") {
-            $OpenOcdTarget = "target/rp2350.cfg"
-        }
         else {
-            $OpenOcdTarget = "target/rp2040.cfg"
+            $OpenOcdTarget = Get-DefaultOpenOcdTarget -Board $Board
         }
     }
 

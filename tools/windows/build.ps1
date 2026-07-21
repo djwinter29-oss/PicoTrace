@@ -1,7 +1,6 @@
 param(
     [string]$Board = "pico",
-    [string]$FirmwareBuildDir = "",
-    [string]$TestBuildDir = "build/tests"
+    [string]$FirmwareBuildDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,14 +14,11 @@ try {
     Initialize-BuildEnvironment
 
     if (-not $FirmwareBuildDir) {
-        $FirmwareBuildDir = "build/firmware-$Board"
+        $FirmwareBuildDir = Get-DefaultFirmwareBuildDir -Board $Board
     }
 
     Invoke-NativeCommand "Firmware configure" { cmake -S firmware -B $FirmwareBuildDir -DPICO_BOARD=$Board }
     Invoke-NativeCommand "Firmware build" { cmake --build $FirmwareBuildDir }
-
-    Invoke-NativeCommand "Host test configure" { cmake -S firmware/tests -B $TestBuildDir }
-    Invoke-NativeCommand "Host test build" { cmake --build $TestBuildDir }
 }
 finally {
     Pop-Location
