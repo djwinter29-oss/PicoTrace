@@ -2,7 +2,7 @@
  * @file i2c_decoder.c
  * @brief Software decoder for oversampled I2C raw buffers.
  *
- * The decoder consumes packed two-pin samples from the I2C monitor ping-pong DMA buffers, detects
+ * The decoder consumes packed two-pin samples from the I2C monitor staged DMA buffers, detects
  * I2C START and STOP conditions, reconstructs bytes on SCL rising edges, and reports decoded
  * events through a caller-provided callback.
  */
@@ -14,6 +14,19 @@
 #include <string.h>
 
 #include "trace/decode/i2c/i2c_trace_packet.h"
+
+#define I2C_DECODER_SAMPLE_LOW_LOW_WORD 0x00000000u
+#define I2C_DECODER_SAMPLE_HIGH_LOW_WORD 0x55555555u
+#define I2C_DECODER_SAMPLE_LOW_HIGH_WORD 0xAAAAAAAAu
+#define I2C_DECODER_SAMPLE_HIGH_HIGH_WORD UINT32_MAX
+
+static uint32_t i2c_decoder_repeated_sample_word(bool sda, bool scl) {
+    if (scl) {
+        return sda ? I2C_DECODER_SAMPLE_HIGH_HIGH_WORD : I2C_DECODER_SAMPLE_LOW_HIGH_WORD;
+    }
+
+    return sda ? I2C_DECODER_SAMPLE_HIGH_LOW_WORD : I2C_DECODER_SAMPLE_LOW_LOW_WORD;
+}
 
 /**
  * @brief Emit one decoded event to the caller-provided sink when emission is still enabled.
@@ -176,6 +189,18 @@ i2c_decoder_result_t i2c_decoder_process_buffer(
         /* Each 32-bit raw word carries 16 consecutive two-bit SDA/SCL samples, MSB first. */
         uint32_t packed_samples = raw_words[word_index];
 
+        if (!have_previous_levels) {
+            if (packed_samples == I2C_DECODER_SAMPLE_HIGH_HIGH_WORD) {
+                have_previous_levels = true;
+                previous_sda = true;
+                previous_scl = true;
+                continue;
+            }
+        } else if ((pending_event == 0u)
+                   && (packed_samples == i2c_decoder_repeated_sample_word(previous_sda, previous_scl))) {
+            continue;
+        }
+
         for (uint32_t sample_in_word = 0u; sample_in_word < 16u; ++sample_in_word) {
             uint8_t sample = (uint8_t)((packed_samples >> 30u) & 0x03u);
             bool sda = (sample & 0x01u) != 0u;
@@ -269,16 +294,15 @@ i2c_decoder_result_t i2c_decoder_process_buffer_into_builder(
     for (uint32_t word_index = 0u; word_index < raw_word_count; ++word_index) {
         uint32_t packed_samples = raw_words[word_index];
 
-        /* Skip all-idle words when the decoder is between transactions and already synchronized. */
         if (!have_previous_levels) {
-            if (packed_samples == UINT32_MAX) {
+            if (packed_samples == I2C_DECODER_SAMPLE_HIGH_HIGH_WORD) {
                 have_previous_levels = true;
                 previous_sda = true;
                 previous_scl = true;
                 continue;
             }
-        } else if (!transaction_active && (pending_event == 0u) && previous_sda && previous_scl
-                   && (packed_samples == UINT32_MAX)) {
+        } else if ((pending_event == 0u)
+                   && (packed_samples == i2c_decoder_repeated_sample_word(previous_sda, previous_scl))) {
             continue;
         }
 

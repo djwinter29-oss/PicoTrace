@@ -120,6 +120,24 @@ static uint32_t i2c_monitor_channel_index(const i2c_monitor_channel_state_t *cha
     return (uint32_t)(channel_state - &g_i2c_monitor_channels[0]);
 }
 
+static bool i2c_monitor_take_next_channel_from_mask(uint8_t *mask_in_out, uint32_t *channel_out) {
+    uint8_t remaining_mask = *mask_in_out;
+    uint32_t channel = 0u;
+
+    if (remaining_mask == 0u) {
+        return false;
+    }
+
+    while ((remaining_mask & 0x01u) == 0u) {
+        remaining_mask >>= 1u;
+        channel += 1u;
+    }
+
+    *mask_in_out = (uint8_t)(*mask_in_out & (uint8_t)~(1u << channel));
+    *channel_out = channel;
+    return true;
+}
+
 static void i2c_monitor_set_poll_interest(
     const i2c_monitor_channel_state_t *channel_state,
     bool poll_needed
@@ -562,21 +580,19 @@ static void i2c_monitor_schedule_stream_stop_transition(i2c_monitor_channel_stat
 static void i2c_monitor_dma_irq_handler(void) {
     uint32_t pending = dma_hw->ints0;
     bool stream_enabled = app_control_stream_enabled();
+    uint8_t active_mask = g_i2c_monitor_poll_channel_mask;
+    uint32_t channel;
 
     /* This monitor owns the exclusive DMA IRQ0 handler, so acknowledge every latched bit up front.
      * Otherwise an unrelated stale pending bit can retrigger the IRQ forever and starve control work.
      */
     dma_hw->ints0 = pending;
 
-    for (uint32_t channel = 0u; channel < I2C_MONITOR_CHANNEL_COUNT; ++channel) {
+    while (i2c_monitor_take_next_channel_from_mask(&active_mask, &channel)) {
         i2c_monitor_channel_state_t *channel_state = &g_i2c_monitor_channels[channel];
         uint32_t channel_mask;
         uint8_t completed_buffer;
         uint8_t next_buffer;
-
-        if (channel_state->dma_channel < 0) {
-            continue;
-        }
 
         channel_mask = 1u << (uint32_t)channel_state->dma_channel;
         if ((pending & channel_mask) == 0u) {
@@ -614,6 +630,7 @@ void i2c_monitor_poll(void) {
     uint8_t active_mask;
     uint8_t pending_mask;
     bool stream_enabled;
+    uint32_t channel;
 
     if (!g_i2c_monitor_initialized || g_i2c_monitor_init_failed) {
         return;
@@ -623,21 +640,13 @@ void i2c_monitor_poll(void) {
     active_mask = g_i2c_monitor_poll_channel_mask;
 
     if (!stream_enabled) {
-        for (uint32_t channel = 0u; channel < I2C_MONITOR_CHANNEL_COUNT; ++channel) {
-            if ((active_mask & (uint8_t)(1u << channel)) == 0u) {
-                continue;
-            }
-
+        while (i2c_monitor_take_next_channel_from_mask(&active_mask, &channel)) {
             i2c_monitor_schedule_stream_stop_transition(&g_i2c_monitor_channels[channel]);
         }
     }
 
     pending_mask = g_i2c_monitor_transition_channel_mask;
-    for (uint32_t channel = 0u; channel < I2C_MONITOR_CHANNEL_COUNT; ++channel) {
-        if ((pending_mask & (uint8_t)(1u << channel)) == 0u) {
-            continue;
-        }
-
+    while (i2c_monitor_take_next_channel_from_mask(&pending_mask, &channel)) {
         i2c_monitor_process_pending_transition(
             &g_i2c_monitor_channels[channel],
             g_i2c_monitor_logical_channels[channel]
@@ -649,13 +658,9 @@ void i2c_monitor_poll(void) {
     }
 
     active_mask = (uint8_t)(g_i2c_monitor_poll_channel_mask & (uint8_t)~g_i2c_monitor_transition_channel_mask);
-    for (uint32_t channel = 0u; channel < I2C_MONITOR_CHANNEL_COUNT; ++channel) {
+    while (i2c_monitor_take_next_channel_from_mask(&active_mask, &channel)) {
         i2c_monitor_channel_state_t *channel_state;
         uint32_t drained_buffers;
-
-        if ((active_mask & (uint8_t)(1u << channel)) == 0u) {
-            continue;
-        }
 
         channel_state = &g_i2c_monitor_channels[channel];
         if (channel_state->dma_channel < 0) {

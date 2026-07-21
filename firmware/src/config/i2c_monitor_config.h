@@ -13,7 +13,7 @@
 /** @brief Number of raw DMA buffers owned by each logical I2C monitor channel. */
 #define I2C_MONITOR_BUFFER_COUNT 3u
 /** @brief Number of 32-bit words stored in each raw DMA buffer. */
-#define I2C_MONITOR_BUFFER_WORDS 64u
+#define I2C_MONITOR_BUFFER_WORDS 128u
 /** @brief Default I2C oversampling rate used by simple control paths. */
 #define I2C_MONITOR_DEFAULT_SAMPLE_HZ 8000000u
 

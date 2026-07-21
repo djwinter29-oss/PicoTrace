@@ -26,28 +26,32 @@ Run a repeatable PicoTrace I2C trace test from Linux using the board-local CDC C
 
 ## Procedure
 1. Check the current I2C trace baseline notes in `docs/testlog/rp2040-benchmark-baseline.md`, the recent RP2040 run history in `docs/testlog/rp2040-benchmark-testlog.md`, and the entry format in `docs/testlog/rp2040-benchmark-testlog-template.md`, then confirm the bench wiring and Raspberry Pi preconditions in `docs/raspberry-pi-test-setup.md`.
-2. If needed, rebuild and flash the target firmware before testing.
-3. When comparing RP2040 clock points, build one firmware directory per clock using `./tools/linux/build.sh --board pico --firmware-build-dir ... --system-clock-khz ...`, then flash the matching directory before each sweep.
-4. Run the repo-local I2C trace helper to configure channel `0`, generate one `i2cdetect -y 1` scan, and collect the decoded trace summary.
-5. Compare the traced transaction count against the expected `112` address-probe transactions.
-6. Check the device status line for `overruns=0` and `sticky=0`.
-7. Record the run in `docs/testlog/rp2040-benchmark-testlog.md` using `docs/testlog/rp2040-benchmark-testlog-template.md`, including commands, measured results, and interpretation.
-8. Compare the I2C result against `docs/testlog/rp2040-benchmark-baseline.md` and report whether the trace result changed compared with the previous baseline, especially transaction count, balanced start/stop events, or monitor overrun behavior.
-9. When you need a heavier I2C decode/backlog check than one `i2cdetect` scan, run the helper with `--workload combined-burst --target-address 0x50 --read-length 4 --repeat-count 64 --expect-transactions 0` and compare the repeated-start event shape (`starts = 2 * stops`) plus monitor overrun behavior.
-10. When you only need the standard smoke check, prefer the baseline conservative rate for the selected firmware clock.
-11. If you are checking the sampler ceiling on RP2040, use the current baseline table as the starting point: `150 MHz -> 3.75 MHz`, `200 MHz -> 5.25 MHz`, `225 MHz -> 5.75 MHz`, `250 MHz -> 6.6 MHz` clean on the standard `i2cdetect` workload.
-12. If the helper fails because the live firmware or bench cannot sustain the requested rate, retry with a lower non-zero sampler rate instead of assuming only a few discrete values are supported; the current firmware accepts any non-zero `sample-hz` and clamps the PIO divider at `1.0`.
+2. Unless the user explicitly asks for another clock or a cross-clock comparison, use the `250 MHz` RP2040 build directory `build/firmware-pico-250m` for the trace test run.
+3. If needed, rebuild and flash the target firmware before testing.
+4. When comparing RP2040 clock points, build one firmware directory per clock using `./tools/linux/build.sh --board pico --firmware-build-dir ... --system-clock-khz ...`, then flash the matching directory before each sweep.
+5. Run the repo-local I2C trace helper to configure channel `0`, generate one `i2cdetect -y 1` scan, and collect the decoded trace summary.
+6. Compare the traced transaction count against the expected `112` address-probe transactions.
+7. Check the device status line for `overruns=0` and `sticky=0`.
+8. Record the run in `docs/testlog/rp2040-benchmark-testlog.md` using `docs/testlog/rp2040-benchmark-testlog-template.md`, including commands, measured results, and interpretation.
+9. Compare the I2C result against `docs/testlog/rp2040-benchmark-baseline.md` and report whether the trace result changed compared with the previous baseline, especially transaction count, balanced start/stop events, or monitor overrun behavior.
+10. When you need a heavier I2C decode/backlog check than one `i2cdetect` scan, run the helper with `--workload combined-burst --target-address 0x50 --read-length 4 --repeat-count 64 --expect-transactions 0` and compare the repeated-start event shape (`starts = 2 * stops`) plus monitor overrun behavior.
+11. When you only need the standard smoke check, prefer the baseline conservative rate for the selected firmware clock.
+12. If you are checking the sampler ceiling on RP2040, use the current baseline table as the starting point.
+13. If the helper fails because the live firmware or bench cannot sustain the requested rate, retry with a lower non-zero sampler rate instead of assuming only a few discrete values are supported; the current firmware accepts any non-zero `sample-hz` and clamps the PIO divider at `1.0`.
+14. Only update `docs/testlog/rp2040-benchmark-baseline.md` when the user explicitly asks for a baseline update.
 
 ## Core Commands
 - Focused firmware tests: `cmake --build build/tests --target usb_app_test && ./build/tests/usb_app_test`
 - Build Pico firmware: `cmake --build build/firmware-pico --target picotrace`
 - Flash Pico firmware: `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico --skip-build`
+- Build default 250 MHz Pico firmware: `./tools/linux/build.sh --board pico --firmware-build-dir build/firmware-pico-250m --system-clock-khz 250000`
+- Flash default 250 MHz Pico firmware: `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico-250m --skip-build`
 - Build clock-specific Pico firmware: `./tools/linux/build.sh --board pico --firmware-build-dir build/firmware-pico-225m --system-clock-khz 225000`
 - Flash clock-specific Pico firmware: `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico-225m --skip-build`
 - Build Pico 2 firmware: `cmake --build build/firmware-pico2 --target picotrace`
 - Flash Pico 2 firmware: `./tools/linux/load.sh --board pico2 --firmware-build-dir build/firmware-pico2 --skip-build`
-- Default I2C scan test: `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
-- Repeated-start stress test: `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --workload combined-burst --target-address 0x50 --read-length 4 --repeat-count 64 --expect-transactions 0`
+- Default 250 MHz I2C scan test: `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
+- Default 250 MHz repeated-start stress test: `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --workload combined-burst --target-address 0x50 --read-length 4 --repeat-count 64 --expect-transactions 0`
 - Passive capture only: `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --sample-hz 4000000 --no-generate-traffic --expect-transactions 0`
 
 ## Interpretation

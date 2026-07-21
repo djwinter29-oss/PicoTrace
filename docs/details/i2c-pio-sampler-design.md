@@ -96,19 +96,19 @@ Each buffer contains `I2C_MONITOR_BUFFER_WORDS` 32-bit words.
 
 At the current default:
 
-- `I2C_MONITOR_BUFFER_WORDS = 64`
+- `I2C_MONITOR_BUFFER_WORDS = 128`
 
 That gives:
 
-$$64 \times 4 = 256\ \text{bytes per buffer}$$
+$$128 \times 4 = 512\ \text{bytes per buffer}$$
 
 Per channel, the raw buffer set consumes:
 
-$$I2C_MONITOR_BUFFER_COUNT \times 256 = 768\ \text{bytes}$$
+$$I2C_MONITOR_BUFFER_COUNT \times 512 = 1536\ \text{bytes}$$
 
 Across four channels, the raw sample buffers consume:
 
-$$4 \times 512 = 2048\ \text{bytes}$$
+$$4 \times 1536 = 6144\ \text{bytes}$$
 
 ## DMA Ownership Model
 
@@ -181,7 +181,7 @@ For each completed DMA buffer:
 That means the current implementation proves:
 
 - PIO sampling works per channel
-- DMA fills alternating ping-pong buffers
+- DMA fills staged raw buffers and re-arms the next free slot in the channel-local set
 - oversampled raw buffers are decoded into I2C events
 - partial packet state survives across DMA IRQs until a transaction ends or a packet fills
 - `usb_bulk_service_stream()` can drain those decoded packets onto the vendor bulk interface and flush them when they are available
@@ -303,7 +303,7 @@ decode, and packetization separate makes bring-up easier and keeps failure modes
 
 ## Relationship To The Trace Ring
 
-The ping-pong raw buffers are upstream of the trace ring, but the current implementation decodes
+The staged raw DMA buffers are upstream of the trace ring, but the current implementation decodes
 them before queueing and keeps packet assembly state per channel.
 
 Completed raw DMA buffers are decoded into event fragments such as:
