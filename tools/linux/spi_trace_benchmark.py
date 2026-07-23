@@ -87,6 +87,8 @@ class TrialResult:
     sampler_overrun_count: int
     ring_drop_count: int
     usb_host_backpressure_stall_count: int
+    dma_words_consumed: int
+    fragment_push_attempt_count: int
     peak_ring_depth_packets: int
     timeout_close_count: int
     throughput_mbps: float
@@ -261,8 +263,9 @@ def collect_stream(config: BenchmarkConfig, marker: bytes, expected: bytes) -> T
 
     raw_mosi = bytes(captured_mosi)
     raw_miso = bytes(captured_miso)
-    marker_index = raw_mosi.find(marker)
     throughput_mbps = (config.total_bytes * 8.0) / tx_seconds / 1000000.0
+
+    marker_index = raw_mosi.find(marker)
 
     if marker_index < 0:
         return TrialResult(
@@ -277,6 +280,8 @@ def collect_stream(config: BenchmarkConfig, marker: bytes, expected: bytes) -> T
             sampler_overrun_count=status.sampler_overrun_count,
             ring_drop_count=status.ring_drop_count,
             usb_host_backpressure_stall_count=status.usb_host_backpressure_stall_count,
+            dma_words_consumed=status.dma_words_consumed,
+            fragment_push_attempt_count=status.fragment_push_attempt_count,
             peak_ring_depth_packets=status.peak_ring_depth_packets,
             timeout_close_count=status.timeout_close_count,
             throughput_mbps=throughput_mbps,
@@ -302,6 +307,8 @@ def collect_stream(config: BenchmarkConfig, marker: bytes, expected: bytes) -> T
         sampler_overrun_count=status.sampler_overrun_count,
         ring_drop_count=status.ring_drop_count,
         usb_host_backpressure_stall_count=status.usb_host_backpressure_stall_count,
+        dma_words_consumed=status.dma_words_consumed,
+        fragment_push_attempt_count=status.fragment_push_attempt_count,
         peak_ring_depth_packets=status.peak_ring_depth_packets,
         timeout_close_count=status.timeout_close_count,
         throughput_mbps=throughput_mbps,
@@ -322,6 +329,7 @@ def format_trial(index: int, total_bytes: int, capture_mode: SpiCaptureMode, res
         f"overruns={result.overrun_count} sink={result.sink_overrun_count} "
         f"sampler={result.sampler_overrun_count} ring={result.ring_drop_count} "
         f"host_stalls={result.usb_host_backpressure_stall_count} "
+        f"dma_words={result.dma_words_consumed} fragment_attempts={result.fragment_push_attempt_count} "
         f"peak={result.peak_ring_depth_packets} "
         f"timeout_closes={result.timeout_close_count}"
     )

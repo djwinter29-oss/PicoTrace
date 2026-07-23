@@ -72,6 +72,8 @@ typedef struct {
     uint32_t timeout_us; /**< Bus-wide inter-byte timeout applied to all sibling logical channels. */
     uint32_t ring_drop_count_base; /**< Baseline trace-ring drop count captured when the current session started. */
     uint32_t usb_host_backpressure_stall_count_base; /**< Baseline host-backpressure USB stall count captured when the current session started. */
+    uint32_t dma_words_consumed; /**< Number of raw DMA words consumed during the current session. */
+    uint32_t fragment_push_attempt_count; /**< Number of packet fragments submitted to the trace ring during the current session. */
     uint32_t peak_ring_depth_packets; /**< Peak queued trace-packet depth observed during the current session. */
     uint32_t timeout_close_count; /**< Number of channel transactions closed by the bus idle-timeout path during the current session. */
 } spi_monitor_bus_state_t;
@@ -449,6 +451,7 @@ static bool spi_monitor_packet_builder_flush(
         builder->packet.header.flags |= TRACE_FLAG_END;
     }
     builder->packet.header.payload_len = (uint16_t)builder->payload_offset;
+    g_spi_monitor_buses[bus].fragment_push_attempt_count += 1u;
     if (!spi_monitor_push_trace_packet(&builder->packet)) {
         spi_monitor_packet_builder_drop_open_packet(builder);
         builder->transaction_fragmented = true;
@@ -1174,6 +1177,8 @@ static void spi_monitor_consume_channel_sampler_words(uint32_t sampler, uint32_t
         return;
     }
 
+    g_spi_monitor_buses[sampler_state->bus].dma_words_consumed += word_count;
+
     while (cursor < chunk_end) {
         uint32_t boundary_offset;
         uint32_t span_end = chunk_end;
@@ -1273,6 +1278,8 @@ static void spi_monitor_reset_bus_state(spi_monitor_bus_state_t *bus_state) {
     bus_state->timeout_us = 0u;
     bus_state->ring_drop_count_base = 0u;
     bus_state->usb_host_backpressure_stall_count_base = 0u;
+    bus_state->dma_words_consumed = 0u;
+    bus_state->fragment_push_attempt_count = 0u;
     bus_state->peak_ring_depth_packets = 0u;
     bus_state->timeout_close_count = 0u;
 }
@@ -1341,6 +1348,8 @@ static void spi_monitor_fill_bus_status(uint32_t bus, spi_monitor_bus_status_t *
     status_out->sampler_overrun_count = sampler_overrun_count;
     status_out->ring_drop_count = trace_ring_dropped_packets() - bus_state->ring_drop_count_base;
     status_out->usb_host_backpressure_stall_count = usb_bulk_host_backpressure_stall_count() - bus_state->usb_host_backpressure_stall_count_base;
+    status_out->dma_words_consumed = bus_state->dma_words_consumed;
+    status_out->fragment_push_attempt_count = bus_state->fragment_push_attempt_count;
     status_out->peak_ring_depth_packets = bus_state->peak_ring_depth_packets;
     status_out->timeout_close_count = bus_state->timeout_close_count;
 }
@@ -1480,6 +1489,8 @@ spi_monitor_rc_t spi_monitor_set_bus_config(uint32_t bus, const spi_monitor_bus_
     bus_state->timeout_us = timeout_us;
     bus_state->ring_drop_count_base = trace_ring_dropped_packets();
     bus_state->usb_host_backpressure_stall_count_base = usb_bulk_host_backpressure_stall_count();
+    bus_state->dma_words_consumed = 0u;
+    bus_state->fragment_push_attempt_count = 0u;
     bus_state->peak_ring_depth_packets = trace_ring_available();
     bus_state->timeout_close_count = 0u;
     for (channel = first_channel; channel < spi_monitor_bus_first_channel(bus) + SPI_MONITOR_CS_SLOTS_PER_BUS; ++channel) {

@@ -86,8 +86,10 @@ public sealed class HidProtocolTests
             5, 0, 0, 0,
             6, 0, 0, 0,
             7, 0, 0, 0,
+            8, 0, 0, 0,
             9, 0, 0, 0,
             10, 0, 0, 0,
+            11, 0, 0, 0,
         };
 
         var status = HidProtocol.DecodeSpiMonitorStatusPayload(payload);
@@ -96,8 +98,10 @@ public sealed class HidProtocolTests
         Assert.AreEqual(SpiCaptureMode.MosiMiso, status.Capture);
         Assert.AreEqual((uint)250, status.TimeoutUs);
         Assert.AreEqual((uint)7, status.UsbHostBackpressureStallCount);
-        Assert.AreEqual((uint)9, status.PeakRingDepthPackets);
-        Assert.AreEqual((uint)10, status.TimeoutCloseCount);
+        Assert.AreEqual((uint)8, status.DmaWordsConsumed);
+        Assert.AreEqual((uint)9, status.FragmentPushAttemptCount);
+        Assert.AreEqual((uint)10, status.PeakRingDepthPackets);
+        Assert.AreEqual((uint)11, status.TimeoutCloseCount);
     }
 
     [TestMethod]

@@ -35,7 +35,7 @@ __all__ = [
 DEFAULT_HID_REPORT_SIZE = 64
 _HID_I2C_STATUS_BYTES = 18
 _HID_I2C_ALL_STATUS_CHANNEL_BYTES = 14
-_HID_SPI_STATUS_BYTES = 46
+_HID_SPI_STATUS_BYTES = 54
 _HID_SPI_ALL_STATUS_CHANNEL_BYTES = 10
 
 
@@ -158,6 +158,8 @@ class SpiMonitorStatus:
     sampler_overrun_count: int
     ring_drop_count: int
     usb_host_backpressure_stall_count: int
+    dma_words_consumed: int
+    fragment_push_attempt_count: int
     peak_ring_depth_packets: int
     timeout_close_count: int
 
@@ -290,8 +292,10 @@ def decode_spi_monitor_status_payload(payload: bytes) -> SpiMonitorStatus:
         sampler_overrun_count=_read_u32_le(payload, 26),
         ring_drop_count=_read_u32_le(payload, 30),
         usb_host_backpressure_stall_count=_read_u32_le(payload, 34),
-        peak_ring_depth_packets=_read_u32_le(payload, 38),
-        timeout_close_count=_read_u32_le(payload, 42),
+        dma_words_consumed=_read_u32_le(payload, 38),
+        fragment_push_attempt_count=_read_u32_le(payload, 42),
+        peak_ring_depth_packets=_read_u32_le(payload, 46),
+        timeout_close_count=_read_u32_le(payload, 50),
     )
 
 

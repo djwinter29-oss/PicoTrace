@@ -6,6 +6,78 @@ Add new entries here after firmware-affecting test runs.
 
 Use [rp2040-benchmark-testlog-template.md](rp2040-benchmark-testlog-template.md) for the entry format.
 
+## 2026-07-23 - MOSI+MISO Raw Host-Drain Comparison
+
+### Scope
+
+- board: Raspberry Pi Pico (`RP2040`)
+- firmware clock: `250 MHz`
+- firmware/build: `build/firmware-pico-250m`
+- reason: determine whether Python packet decoding, channel splitting, and payload validation are the primary cause of MOSI+MISO downstream loss
+
+### Commands
+
+- `./.venv/bin/python -m pytest host/python/tests/trace/test_transport.py`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi-miso --speed-hz 5700000 5800000 --trials 10 --raw-drain`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi-miso --speed-hz 5700000 5800000 --delay-usecs 1000 --trials 10 --raw-drain`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi-miso --speed-hz 5700000 5800000 --delay-usecs 1000 --trials 10`
+
+### Results
+
+- hosted test: all `3` raw-transport tests passed.
+- Unpaced raw drain: `5.7 MHz` passed `2/10`; `5.8 MHz` passed `5/10`. Failed trials measured `3.91-4.26 Mb/s`, reached `peak=255`, and had `sink=219-433 sampler=0 ring=0`. Raw draining removes decode work and allows the SPI transmitter to present data faster than the downstream USB service can sustain.
+- Rate-controlled raw drain (`--delay-usecs 1000`): `5.7 MHz` and `5.8 MHz` each passed `10/10` with `sink=0 sampler=0 ring=0`. Measured transmit throughput was `3.05-3.63 Mb/s`; raw reads delivered `1,939,936` trace bytes per trial.
+- Rate-controlled normal decode and validation: `5.7 MHz` and `5.8 MHz` each passed `10/10` with complete `952320/952320` MOSI and MISO payloads and `sink=0 sampler=0 ring=0`. Measured transmit throughput was `3.11-3.26 Mb/s`, with peak ring depth `10-12` packets.
+
+### Interpretation
+
+- At a matched offered rate, normal host decode, two-channel separation, and expected-data validation do not produce downstream loss. They are not the primary MOSI+MISO bottleneck on this bench.
+- The unpaced raw result is not a host-decode improvement: it removes consumer work and permits a faster source rate, which exposes the existing USB/ring drain ceiling at about `4 Mb/s`.
+- The limiter remains the sustained device-side USB service path and its pacing relative to the SPI source. Keep the current decoder and avoid a zero-copy host decoder redesign based on this evidence.
+
+### Baseline Impact
+
+- `docs/testlog/rp2040-benchmark-baseline.md` updated: no
+- reason: this is an attribution experiment rather than a stable-envelope update.
+
+## 2026-07-23 - SPI Producer Diagnostic Stability Sweep
+
+### Scope
+
+- board: Raspberry Pi Pico (`RP2040`)
+- firmware clock: `250 MHz`
+- firmware/build: `build/firmware-pico-250m`
+- reason: distinguish SPI producer packetization pressure from shared ring and USB drain saturation at the MOSI+MISO stability edge
+
+### Commands
+
+- `cmake --build build/tests --target usb_app_test && ./build/tests/usb_app_test`
+- `./.venv/bin/python -m pytest host/python/tests/control/test_protocol.py`
+- `cmake --build build/firmware-pico-250m --target picotrace`
+- `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico-250m --skip-build`
+- `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi-miso --speed-hz 5600000 5700000 5800000 --trials 10`
+
+### Results
+
+- hosted tests: `usb_app_test` and all `8` focused Python protocol tests passed. The .NET test runner remains unavailable because `dotnet` is not installed on the bench host.
+- I2C smoke: `transactions=112 starts=112 stops=112 overruns=0 sticky=0`.
+- MOSI+MISO `5.6 MHz`: `10/10` passed at `2.87-3.61 Mb/s`; every trial had `sink=0 sampler=0 ring=0`.
+- MOSI+MISO `5.7 MHz`: `5/10` passed. Failed trials had `sink=37-116 sampler=0 ring=0 peak=255`; passing trials had `peak=62-231` and zero loss.
+- MOSI+MISO `5.8 MHz`: `5/10` passed. Failed trials had `sink=31-113 sampler=0 ring=0 peak=255`; passing trials had `peak=59-200` and zero loss.
+- Producer diagnostics: every trial consumed exactly `952640` DMA words. Passing trials made `2166-2181` fragment attempts, while failure runs made `2094-2148` attempts because ring saturation prevented later fragments from being submitted. Slow successful trials with `11-20` timeout closes created only a small fragment increase relative to the common `2166`-fragment, two-timeout case.
+
+### Interpretation
+
+- The SPI sampler and producer decode path kept up at every tested point: no trial reported a sampler overrun.
+- Timeout-driven transaction splitting is not the source of sink loss. It modestly increases fragment count only on slower successful trials, whereas failing trials saturate the shared ring with only `1-3` timeout closes.
+- The failing signature remains a sustained downstream drain limit. Do not enlarge DMA buffers, change packet layout, or redesign samplers based on this data; prioritize USB service scheduling experiments instead.
+
+### Baseline Impact
+
+- `docs/testlog/rp2040-benchmark-baseline.md` updated: no
+- reason: the longer MOSI+MISO sweep confirms instability above `5.6 MHz` on this run and adds diagnostic evidence without moving the stable reference.
+
 ## 2026-07-23 - USB Bulk Exact-Available Write Benchmark Rerun
 
 ### Scope

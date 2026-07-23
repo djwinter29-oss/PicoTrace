@@ -26,6 +26,8 @@ public sealed class ControlOperationsTests
             SamplerOverrunCount: 0,
             RingDropCount: 0,
             UsbHostBackpressureStallCount: 0,
+            DmaWordsConsumed: 0,
+            FragmentPushAttemptCount: 0,
             PeakRingDepthPackets: 0,
             TimeoutCloseCount: 0);
 
@@ -56,6 +58,8 @@ public sealed class ControlOperationsTests
             SamplerOverrunCount: 0,
             RingDropCount: 0,
             UsbHostBackpressureStallCount: 0,
+            DmaWordsConsumed: 0,
+            FragmentPushAttemptCount: 0,
             PeakRingDepthPackets: 0,
             TimeoutCloseCount: 0);
 
@@ -86,6 +90,8 @@ public sealed class ControlOperationsTests
             SamplerOverrunCount: 0,
             RingDropCount: 0,
             UsbHostBackpressureStallCount: 0,
+            DmaWordsConsumed: 0,
+            FragmentPushAttemptCount: 0,
             PeakRingDepthPackets: 0,
             TimeoutCloseCount: 0);
 

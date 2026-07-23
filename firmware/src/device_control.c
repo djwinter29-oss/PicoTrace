@@ -350,8 +350,10 @@ uint8_t device_control_encode_spi_bus_status_payload(uint32_t bus, const spi_mon
     device_control_write_u32_le(&payload[26], status->sampler_overrun_count);
     device_control_write_u32_le(&payload[30], status->ring_drop_count);
     device_control_write_u32_le(&payload[34], status->usb_host_backpressure_stall_count);
-    device_control_write_u32_le(&payload[38], status->peak_ring_depth_packets);
-    device_control_write_u32_le(&payload[42], status->timeout_close_count);
+    device_control_write_u32_le(&payload[38], status->dma_words_consumed);
+    device_control_write_u32_le(&payload[42], status->fragment_push_attempt_count);
+    device_control_write_u32_le(&payload[46], status->peak_ring_depth_packets);
+    device_control_write_u32_le(&payload[50], status->timeout_close_count);
     return DEVICE_CONTROL_SPI_MONITOR_STATUS_PAYLOAD_BYTES;
 }
 

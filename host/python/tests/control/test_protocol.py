@@ -87,8 +87,10 @@ class HidProtocolTests(unittest.TestCase):
             b"\x05\x00\x00\x00"
             b"\x06\x00\x00\x00"
             b"\x07\x00\x00\x00"
+            b"\x08\x00\x00\x00"
             b"\x09\x00\x00\x00"
             b"\x0A\x00\x00\x00"
+            b"\x0B\x00\x00\x00"
         )
 
         status = decode_spi_monitor_status_payload(payload)
@@ -105,8 +107,10 @@ class HidProtocolTests(unittest.TestCase):
         self.assertEqual(status.sampler_overrun_count, 5)
         self.assertEqual(status.ring_drop_count, 6)
         self.assertEqual(status.usb_host_backpressure_stall_count, 7)
-        self.assertEqual(status.peak_ring_depth_packets, 9)
-        self.assertEqual(status.timeout_close_count, 10)
+        self.assertEqual(status.dma_words_consumed, 8)
+        self.assertEqual(status.fragment_push_attempt_count, 9)
+        self.assertEqual(status.peak_ring_depth_packets, 10)
+        self.assertEqual(status.timeout_close_count, 11)
 
     def test_decode_spi_monitor_all_status_payload(self) -> None:
         payload = (
