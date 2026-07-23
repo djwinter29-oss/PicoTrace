@@ -77,8 +77,9 @@ For SPI and I2C trace workloads, prefer a fixed-slot packet ring over a generic 
 - Use a single-producer, single-consumer ring of fixed packet slots.
 - Keep the common packet size aligned to the USB bulk packet size by choosing a total logical packet size that is a multiple of 64 bytes.
 
-The current trace queue implementation lives under `firmware/src/trace/` and uses a 128-byte logical
-packet made of a fixed header plus payload.
+The current trace queue implementation lives under `firmware/src/trace/` and uses an 896-byte logical
+packet made of a fixed 16-byte header plus payload. The size knobs are in
+`firmware/src/config/ring_config.h`.
 
 For the implementation-level design of that queue, see `docs/details/trace-ring-buffer-design.md`.
 For the producer-side PIO sampler and DMA staged-buffer boundary that now feeds raw sample
