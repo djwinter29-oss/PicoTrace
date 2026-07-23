@@ -25,9 +25,7 @@ public sealed class ControlOperationsTests
             SinkOverrunCount: 0,
             SamplerOverrunCount: 0,
             RingDropCount: 0,
-            UsbStallCount: 0,
             UsbHostBackpressureStallCount: 0,
-            UsbPolicyDeferralCount: 0,
             PeakRingDepthPackets: 0,
             TimeoutCloseCount: 0);
 
@@ -57,9 +55,7 @@ public sealed class ControlOperationsTests
             SinkOverrunCount: 0,
             SamplerOverrunCount: 0,
             RingDropCount: 0,
-            UsbStallCount: 0,
             UsbHostBackpressureStallCount: 0,
-            UsbPolicyDeferralCount: 0,
             PeakRingDepthPackets: 0,
             TimeoutCloseCount: 0);
 
@@ -89,9 +85,7 @@ public sealed class ControlOperationsTests
             SinkOverrunCount: 0,
             SamplerOverrunCount: 0,
             RingDropCount: 0,
-            UsbStallCount: 0,
             UsbHostBackpressureStallCount: 0,
-            UsbPolicyDeferralCount: 0,
             PeakRingDepthPackets: 0,
             TimeoutCloseCount: 0);
 

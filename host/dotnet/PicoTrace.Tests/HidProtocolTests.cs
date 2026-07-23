@@ -73,6 +73,34 @@ public sealed class HidProtocolTests
     }
 
     [TestMethod]
+    public void DecodeSpiMonitorStatusPayload_DecodesCompactStatus()
+    {
+        var payload = new byte[]
+        {
+            1, 1, 1, 2, 3, 0x0F,
+            0xFA, 0, 0, 0,
+            0x11, 0, 0, 0,
+            2, 0, 0, 0,
+            3, 0, 0, 0,
+            4, 0, 0, 0,
+            5, 0, 0, 0,
+            6, 0, 0, 0,
+            7, 0, 0, 0,
+            9, 0, 0, 0,
+            10, 0, 0, 0,
+        };
+
+        var status = HidProtocol.DecodeSpiMonitorStatusPayload(payload);
+
+        Assert.AreEqual((byte)1, status.Bus);
+        Assert.AreEqual(SpiCaptureMode.MosiMiso, status.Capture);
+        Assert.AreEqual((uint)250, status.TimeoutUs);
+        Assert.AreEqual((uint)7, status.UsbHostBackpressureStallCount);
+        Assert.AreEqual((uint)9, status.PeakRingDepthPackets);
+        Assert.AreEqual((uint)10, status.TimeoutCloseCount);
+    }
+
+    [TestMethod]
     public void DecodeSpiMonitorAllStatusPayload_DecodesTypedStatuses()
     {
         var payload = new byte[]

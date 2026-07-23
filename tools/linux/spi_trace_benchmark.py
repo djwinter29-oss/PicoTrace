@@ -87,7 +87,6 @@ class TrialResult:
     sampler_overrun_count: int
     ring_drop_count: int
     usb_host_backpressure_stall_count: int
-    usb_policy_deferral_count: int
     peak_ring_depth_packets: int
     timeout_close_count: int
     throughput_mbps: float
@@ -278,7 +277,6 @@ def collect_stream(config: BenchmarkConfig, marker: bytes, expected: bytes) -> T
             sampler_overrun_count=status.sampler_overrun_count,
             ring_drop_count=status.ring_drop_count,
             usb_host_backpressure_stall_count=status.usb_host_backpressure_stall_count,
-            usb_policy_deferral_count=status.usb_policy_deferral_count,
             peak_ring_depth_packets=status.peak_ring_depth_packets,
             timeout_close_count=status.timeout_close_count,
             throughput_mbps=throughput_mbps,
@@ -304,7 +302,6 @@ def collect_stream(config: BenchmarkConfig, marker: bytes, expected: bytes) -> T
         sampler_overrun_count=status.sampler_overrun_count,
         ring_drop_count=status.ring_drop_count,
         usb_host_backpressure_stall_count=status.usb_host_backpressure_stall_count,
-        usb_policy_deferral_count=status.usb_policy_deferral_count,
         peak_ring_depth_packets=status.peak_ring_depth_packets,
         timeout_close_count=status.timeout_close_count,
         throughput_mbps=throughput_mbps,
@@ -325,7 +322,7 @@ def format_trial(index: int, total_bytes: int, capture_mode: SpiCaptureMode, res
         f"overruns={result.overrun_count} sink={result.sink_overrun_count} "
         f"sampler={result.sampler_overrun_count} ring={result.ring_drop_count} "
         f"host_stalls={result.usb_host_backpressure_stall_count} "
-        f"policy_deferrals={result.usb_policy_deferral_count} peak={result.peak_ring_depth_packets} "
+        f"peak={result.peak_ring_depth_packets} "
         f"timeout_closes={result.timeout_close_count}"
     )
 

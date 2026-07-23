@@ -53,7 +53,6 @@ typedef struct {
     uint32_t sampler_overrun_count; /**< Number of DMA half-buffers overwritten before the producer serviced them. */
     uint32_t ring_drop_count; /**< Number of trace-ring packet drops observed since this bus session started. */
     uint32_t usb_host_backpressure_stall_count; /**< Number of USB stream stalls caused by no vendor write space since this bus session started. */
-    uint32_t usb_policy_deferral_count; /**< Number of USB stream writes that deferred bytes due to stream policy since this bus session started. */
     uint32_t peak_ring_depth_packets; /**< Peak queued trace-packet depth observed since this bus session started. */
     uint32_t timeout_close_count; /**< Number of logical SPI transactions closed by the idle-timeout path in the current session. */
 } spi_monitor_bus_status_t;

@@ -87,7 +87,6 @@ class HidProtocolTests(unittest.TestCase):
             b"\x05\x00\x00\x00"
             b"\x06\x00\x00\x00"
             b"\x07\x00\x00\x00"
-            b"\x08\x00\x00\x00"
             b"\x09\x00\x00\x00"
             b"\x0A\x00\x00\x00"
         )
@@ -106,7 +105,6 @@ class HidProtocolTests(unittest.TestCase):
         self.assertEqual(status.sampler_overrun_count, 5)
         self.assertEqual(status.ring_drop_count, 6)
         self.assertEqual(status.usb_host_backpressure_stall_count, 7)
-        self.assertEqual(status.usb_policy_deferral_count, 8)
         self.assertEqual(status.peak_ring_depth_packets, 9)
         self.assertEqual(status.timeout_close_count, 10)
 

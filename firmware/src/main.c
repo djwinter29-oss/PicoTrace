@@ -22,8 +22,6 @@
 #include "usb/usb_cdc.h"
 #include "usb/usb_hid.h"
 
-#define STREAM_SERVICE_PASSES 16u
-
 /** @brief Bridge the CLI shell read callback onto the USB CDC transport. */
 static uint32_t bridge_cli_read(void *context, uint8_t *data, uint32_t capacity) {
     (void)context;
@@ -117,12 +115,12 @@ int main(void) {
         usb_hid_poll();
 
         if (tud_ready()) {
-            bool stream_wrote_any = false;
-
-            for (uint32_t pass = 0u; pass < STREAM_SERVICE_PASSES; ++pass) {
+            for (uint32_t pass = 0u; pass < USB_BULK_SERVICE_MAX_PASSES; ++pass) {
                 bool stream_progress = usb_bulk_service_stream(app_control_stream_enabled());
 
-                stream_wrote_any = stream_wrote_any || stream_progress;
+                if (stream_progress) {
+                    usb_bulk_flush();
+                }
 
                 /* Interleave control-path flushing with stream writes to avoid CDC starvation. */
                 usb_cdc_poll_tx();
@@ -131,10 +129,6 @@ int main(void) {
                 if (!stream_progress) {
                     break;
                 }
-            }
-
-            if (stream_wrote_any) {
-                usb_bulk_flush();
             }
         }
 

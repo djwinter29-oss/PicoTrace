@@ -6,6 +6,81 @@ Add new entries here after firmware-affecting test runs.
 
 Use [rp2040-benchmark-testlog-template.md](rp2040-benchmark-testlog-template.md) for the entry format.
 
+## 2026-07-23 - USB Bulk Exact-Available Write Benchmark Rerun
+
+### Scope
+
+- board: Raspberry Pi Pico (`RP2040`)
+- firmware clock: `250 MHz`
+- firmware/build: `build/firmware-pico-250m`
+- reason: repeat the standard hardware validation from the current USB bulk simplification worktree
+
+### Commands
+
+- `cmake --build build/tests --target usb_app_test && ./build/tests/usb_app_test`
+- `cmake --build build/firmware-pico-250m --target picotrace`
+- `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico-250m --skip-build`
+- `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi --speed-hz 15500000 16000000 16500000 17000000 17500000 18000000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi-miso --speed-hz 5600000 5700000 5800000 5900000 --trials 3`
+
+### Results
+
+- hosted tests: `usb_app_test` built and ran cleanly.
+- MOSI: `15.5/16.0/16.5/17.0/17.5/18.0 MHz` all passed `3/3`. Measured transmit throughput was `7.62-8.44 Mb/s`; the `18.0 MHz` trials measured `8.40-8.44 Mb/s` with `sink=0 sampler=0 ring=0` and `peak=241/244/245`.
+- MOSI+MISO: `5.6 MHz` passed `3/3` at `3.32-3.63 Mb/s`; `5.7 MHz` passed `2/3`, `5.8 MHz` passed `1/3`, and `5.9 MHz` passed `1/3`. Failed trials had `sink=31-182`, `sampler=0`, `ring=0`, and `peak=255`.
+- I2C smoke: the standard `4.0 MHz` trace stayed healthy with `transactions=112 starts=112 stops=112 overruns=0 sticky=0`.
+
+### Interpretation
+
+- MOSI improved over the stable reference: the previously failing `18.0 MHz` point was clean across all three trials without downstream loss.
+- MOSI+MISO regressed relative to the stable reference at `5.7-5.8 MHz` and remains downstream-limited when it fails. The mixed behavior across the two capture modes means this rerun does not establish a new overall stable envelope.
+- I2C shared-bulk validation stayed unchanged and healthy.
+
+### Baseline Impact
+
+- `docs/testlog/rp2040-benchmark-baseline.md` updated: no
+- reason: MOSI improved but MOSI+MISO was less stable than the published reference; repeatable follow-up evidence is required before updating the stable baseline.
+
+## 2026-07-23 - USB Bulk Exact-Available Write Simplification
+
+### Scope
+
+- board: Raspberry Pi Pico (`RP2040`)
+- firmware clock: `250 MHz`
+- firmware/build: `build/firmware-pico-250m`
+- reason: remove vendor-write alignment deferrals, flush each successful bounded stream quantum, and compact the SPI status payload after removing obsolete policy-deferral telemetry
+
+### Commands
+
+- `cmake --build build/tests --target usb_app_test && ./build/tests/usb_app_test`
+- `./.venv/bin/python -m pytest host/python/tests/control/test_protocol.py`
+- `cmake --build build/firmware-pico-250m --target picotrace`
+- `./tools/linux/load.sh --board pico --firmware-build-dir build/firmware-pico-250m --skip-build`
+- `./.venv/bin/python tools/linux/i2c_trace_test.py --channel 0 --bus 1 --sample-hz 4000000 --expect-transactions 112`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi --speed-hz 15500000 16000000 16500000 17000000 17500000 18000000 --trials 3`
+- `./.venv/bin/python tools/linux/spi_trace_benchmark.py --board pico --firmware-build-dir build/firmware-pico-250m --capture mosi-miso --speed-hz 5600000 5700000 5800000 5900000 --trials 3`
+
+### Results
+
+- hosted tests: `usb_app_test` and all `8` focused Python protocol tests passed. The .NET focused tests were not run because `dotnet` is not installed on the bench host.
+- MOSI: `15.5/16.0/16.5/17.0/17.5 MHz` passed `3/3`, with measured transmit throughput of `7.86-8.44 Mb/s`. `18.0 MHz` failed `0/3` with `sink=23/35/37`, `sampler=0`, `ring=0`, and `peak=255`.
+- MOSI+MISO: `5.6/5.7/5.8/5.9 MHz` passed `3/3`, with measured transmit throughput of `2.83-3.66 Mb/s`. Every passing trial had `sink=0 sampler=0 ring=0`; the largest observed peak ring depth was `249`.
+- I2C smoke: the standard `4.0 MHz` `i2cdetect -y 1` trace stayed healthy with `transactions=112 starts=112 stops=112 overruns=0 sticky=0`.
+- SPI status protocol: the HID SPI bus-status payload changed from `50` to `46` bytes after removal of the policy-deferral counter; the Python and .NET decoders and the Linux benchmark helper were updated to match.
+
+### Interpretation
+
+- The vendor consumer now writes every byte currently accepted by TinyUSB, so arbitrary FIFO space no longer creates an alignment-policy defer cycle. The focused integration test verifies a `100`-byte window is consumed in one write.
+- Flushing after each successful `1024`-byte service quantum preserves bounded CDC/HID interleaving while exposing queued vendor bytes to USB earlier.
+- The MOSI envelope matches the current baseline. MOSI+MISO reached a promising clean `5.9 MHz` point, but this single run does not replace the stable baseline without an explicit baseline-update request and a follow-up edge sweep.
+- The `18.0 MHz` MOSI failures remain downstream-limited rather than sampler-limited, so the simplification did not remove the established ring/USB throughput ceiling.
+
+### Baseline Impact
+
+- `docs/testlog/rp2040-benchmark-baseline.md` updated: no
+- reason: MOSI matches the published envelope, and the improved `5.9 MHz` MOSI+MISO result needs confirmation before changing the stable reference.
+
 ## 2026-07-21 - USB Bulk Consume Path Simplification Follow-Up
 
 ### Scope
