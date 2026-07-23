@@ -6,6 +6,7 @@
 #ifndef TRACE_PACKET_H
 #define TRACE_PACKET_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "config/ring_config.h"
@@ -49,10 +50,23 @@ typedef struct {
 _Static_assert(TRACE_PACKET_BYTES > sizeof(trace_packet_header_t),
                "TRACE_PACKET_BYTES must be larger than trace_packet_header_t");
 
+/* The firmware streams trace_packet_t straight from memory and the Python and .NET hosts decode a
+ * fixed 16-byte little-endian header (see host decoders). Pin that wire contract so an accidental
+ * field or padding change fails the build instead of silently desyncing the hosts. */
+_Static_assert(TRACE_PACKET_HEADER_BYTES == 16u,
+               "trace packet header must stay 16 bytes to match the host decoders");
+
 /** @brief Complete fixed-size packet stored in the trace ring. */
 typedef struct {
     trace_packet_header_t header; /**< Fixed metadata header describing the payload fragment. */
     uint8_t payload[TRACE_PACKET_PAYLOAD_BYTES]; /**< Protocol-specific payload bytes for this fragment. */
 } trace_packet_t;
+
+/* Streaming sends the header immediately followed by the payload as one contiguous span, so the
+ * payload must abut the header with no padding and the whole record must equal TRACE_PACKET_BYTES. */
+_Static_assert(offsetof(trace_packet_t, payload) == TRACE_PACKET_HEADER_BYTES,
+               "trace packet payload must directly follow the fixed header");
+_Static_assert(sizeof(trace_packet_t) == TRACE_PACKET_BYTES,
+               "trace_packet_t size must equal TRACE_PACKET_BYTES");
 
 #endif
