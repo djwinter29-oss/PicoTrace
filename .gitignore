@@ -81,3 +81,6 @@ tools/windows/.env.ps1
 
 # Local Linux script configuration
 tools/linux/.env.sh
+
+# Local Pico SDK clone created by tools/linux/setup_env.sh (PICO_SDK_PATH target)
+.pico-sdk/
