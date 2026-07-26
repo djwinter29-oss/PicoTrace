@@ -1,9 +1,19 @@
 name: Release Firmware
 
+# Firmware releases are cut by pushing a semver tag, e.g.
+#   git tag v1.2.3 && git push origin v1.2.3
+# The tag MUST be pushed to origin (a plain `git push` does not push tags) and
+# MUST match vMAJOR.MINOR.PATCH for this workflow to run.
+#
+# `workflow_dispatch` lets you run the firmware build manually (from the Actions
+# tab) to verify it without cutting a release; on a manual run the build jobs
+# still publish downloadable run artifacts, but the GitHub Release and package
+# publish steps are skipped because they require a version tag.
 on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -59,6 +69,8 @@ jobs:
     name: Publish Release
     runs-on: ubuntu-latest
     needs: build-firmware
+    # Only publish a GitHub Release when a version tag was pushed.
+    if: startsWith(github.ref, 'refs/tags/')
 
     steps:
       - name: Download firmware artifacts
@@ -70,6 +82,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             release-artifacts/firmware-pico/picotrace-pico.uf2
             release-artifacts/firmware-pico/picotrace-pico.bin
@@ -81,6 +94,8 @@ jobs:
   publish-python:
     name: Publish Python Package
     runs-on: ubuntu-latest
+    # Version comes from the tag, so only run for tag pushes.
+    if: startsWith(github.ref, 'refs/tags/')
 
     steps:
       - name: Check out repository
@@ -117,7 +132,11 @@ jobs:
 
       - name: Build Python package
         working-directory: host/python
-        run: python -m build
+        run: |
+          # Build into a clean dist/ so only this release's artifacts are published,
+          # never any stale wheels committed under host/python/dist/.
+          rm -rf dist
+          python -m build
 
       - name: Check Python package metadata
         working-directory: host/python
@@ -128,11 +147,21 @@ jobs:
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: python -m twine upload dist/*
+        run: |
+          # Skip gracefully when no PyPI token is configured so a missing secret
+          # never fails the firmware release. Add the PYPI_API_TOKEN repository
+          # secret to enable publishing to PyPI.
+          if [ -z "${TWINE_PASSWORD}" ]; then
+            echo "PYPI_API_TOKEN is not set; skipping PyPI upload."
+            exit 0
+          fi
+          python -m twine upload dist/*
 
   build-dotnet:
     name: Build .NET Host
     runs-on: ubuntu-latest
+    # Version comes from the tag, so only run for tag pushes.
+    if: startsWith(github.ref, 'refs/tags/')
 
     steps:
       - name: Check out repository
