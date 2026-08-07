@@ -64,7 +64,8 @@ static bool device_cli_parse_u32(const char *text, uint32_t *value_out) {
 
 /** @brief Format one I2C monitor status line for the CLI. */
 static bool device_cli_write_i2cmon_status(uint32_t channel, const i2c_monitor_channel_status_t *status) {
-    char line[96];
+    /* Sized for the worst-case i2cmon status line (all 32-bit counters at max width, ~111 bytes). */
+    char line[128];
 
     if (!device_control_format_i2c_channel_status_line(channel, status, line, sizeof(line))) {
         return false;
@@ -75,7 +76,8 @@ static bool device_cli_write_i2cmon_status(uint32_t channel, const i2c_monitor_c
 
 /** @brief Format one SPI monitor bus status line for the CLI. */
 static bool device_cli_write_spimon_status(uint32_t bus, const spi_monitor_bus_status_t *status) {
-    char line[128];
+    /* Sized for the worst-case spimon status line (all 32-bit counters at max width, ~167 bytes). */
+    char line[192];
 
     if (!device_control_format_spi_bus_status_line(bus, status, line, sizeof(line))) {
         return false;

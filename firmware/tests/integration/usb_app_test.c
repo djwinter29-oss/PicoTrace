@@ -10,6 +10,7 @@
 #include "app_control.h"
 #include "app_control_test.h"
 #include "cli/device_cli.h"
+#include "device_control.h"
 #include "driver/system.h"
 #include "test_support.h"
 #include "trace/capture/i2c/i2c_monitor_control.h"
@@ -1871,6 +1872,43 @@ static void test_hid_builtin_command_returns_status_response(void) {
     assert(memcmp(&response.payload[2], "test", 4u) == 0);
 }
 
+static void test_device_control_status_lines_detect_truncation(void) {
+    spi_monitor_bus_status_t spi_status = {0};
+    i2c_monitor_channel_status_t i2c_status = {0};
+    char full_line[192];
+    char tiny_line[8];
+
+    reset_usb_stub();
+
+    spi_status.running = true;
+    spi_status.capture = SPI_MONITOR_CAPTURE_MOSI;
+    spi_status.spi_mode = 3u;
+    spi_status.channel_select_mask = 0x01u;
+    spi_status.timeout_us = 0xFFFFFFFFu;
+    spi_status.packets_emitted = 0xFFFFFFFFu;
+    spi_status.transactions_emitted = 0xFFFFFFFFu;
+    spi_status.overrun_count = 0xFFFFFFFFu;
+    spi_status.timeout_close_count = 0xFFFFFFFFu;
+
+    /* A correctly sized buffer holds the whole line even with max-width counters. */
+    assert(device_control_format_spi_bus_status_line(0u, &spi_status, full_line, sizeof(full_line)) == true);
+    assert(strstr(full_line, "spimon bus0") != NULL);
+    /* A too-small buffer must report failure instead of a silently clipped line. */
+    assert(device_control_format_spi_bus_status_line(0u, &spi_status, tiny_line, sizeof(tiny_line)) == false);
+
+    i2c_status.running = true;
+    i2c_status.sample_hz = 0xFFFFFFFFu;
+    i2c_status.completed_buffers = 0xFFFFFFFFu;
+    i2c_status.overrun_count = 0xFFFFFFFFu;
+    assert(device_control_format_i2c_channel_status_line(0u, &i2c_status, full_line, sizeof(full_line)) == true);
+    assert(strstr(full_line, "i2cmon ch0") != NULL);
+    assert(device_control_format_i2c_channel_status_line(0u, &i2c_status, tiny_line, sizeof(tiny_line)) == false);
+
+    assert(device_control_format_version_line(full_line, sizeof(full_line)) == true);
+    assert(strstr(full_line, "firmware_version=") != NULL);
+    assert(device_control_format_version_line(tiny_line, sizeof(tiny_line)) == false);
+}
+
 static void test_cli_version_reports_firmware_version(void) {
     static const uint8_t payload[] = {'v', 'e', 'r', 's', 'i', 'o', 'n', '\r'};
 
@@ -2327,6 +2365,7 @@ int main(void) {
     test_cdc_rx_callback_preserves_packet_tail_when_queue_fills();
     test_cdc_tx_poll_limits_one_pass_budget();
     test_cdc_tx_enqueue_failure_is_counted();
+    test_device_control_status_lines_detect_truncation();
     test_cli_version_reports_firmware_version();
     test_cli_led_command_and_hid_led_command_share_action();
     test_cli_reboot_command_uses_system_reboot();
