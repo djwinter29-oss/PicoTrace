@@ -29,6 +29,19 @@ static void device_control_write_u32_le(uint8_t *data, uint32_t value) {
     data[3] = (uint8_t)((value >> 24u) & 0xFFu);
 }
 
+/**
+ * @brief Report whether an @c snprintf call produced a complete, untruncated string.
+ * @param written Return value from @c snprintf.
+ * @param capacity Destination buffer capacity that was passed to @c snprintf.
+ * @return @c true only when the whole string fit; @c false on encoding error or truncation.
+ *
+ * @c snprintf returns the length it would have written, so a clipped line still yields a positive
+ * value. Treating truncation as failure keeps callers from emitting a silently shortened status line.
+ */
+static bool device_control_snprintf_complete(int written, size_t capacity) {
+    return (written > 0) && ((size_t)written < capacity);
+}
+
 static device_control_result_t device_control_result_from_i2c_rc(i2c_monitor_rc_t result) {
     switch (result) {
         case I2C_MONITOR_RC_OK:
@@ -174,7 +187,10 @@ bool device_control_format_version_line(char *buffer, size_t capacity) {
         return false;
     }
 
-    return snprintf(buffer, capacity, "firmware_version=%s", device_control_get_status().firmware_version) > 0;
+    return device_control_snprintf_complete(
+        snprintf(buffer, capacity, "firmware_version=%s", device_control_get_status().firmware_version),
+        capacity
+    );
 }
 
 const char *device_control_led_on_line(void) {
@@ -261,19 +277,22 @@ bool device_control_format_i2c_channel_status_line(uint32_t channel, const i2c_m
         return false;
     }
 
-    return snprintf(
-        buffer,
-        capacity,
-        "i2cmon ch%lu %s hz=%lu buffers=%lu overruns=%lu sticky=%u pending=%u reason=%u",
-        (unsigned long)channel,
-        status->running ? "running" : "stopped",
-        (unsigned long)status->sample_hz,
-        (unsigned long)status->completed_buffers,
-        (unsigned long)status->overrun_count,
-        status->overrun ? 1u : 0u,
-        status->transition_pending ? 1u : 0u,
-        (unsigned int)status->transition_reason
-    ) > 0;
+    return device_control_snprintf_complete(
+        snprintf(
+            buffer,
+            capacity,
+            "i2cmon ch%lu %s hz=%lu buffers=%lu overruns=%lu sticky=%u pending=%u reason=%u",
+            (unsigned long)channel,
+            status->running ? "running" : "stopped",
+            (unsigned long)status->sample_hz,
+            (unsigned long)status->completed_buffers,
+            (unsigned long)status->overrun_count,
+            status->overrun ? 1u : 0u,
+            status->transition_pending ? 1u : 0u,
+            (unsigned int)status->transition_reason
+        ),
+        capacity
+    );
 }
 
 uint8_t device_control_encode_i2c_all_status_payload(const i2c_monitor_channel_status_t *status, uint32_t status_count, uint8_t *payload, uint32_t capacity) {
@@ -362,21 +381,24 @@ bool device_control_format_spi_bus_status_line(uint32_t bus, const spi_monitor_b
         return false;
     }
 
-    return snprintf(
-        buffer,
-        capacity,
-        "spimon bus%lu %s select=%s capture=%s mode=%u timeout_us=%lu packets=%lu txns=%lu overruns=%lu timeout_closes=%lu",
-        (unsigned long)bus,
-        status->running ? "running" : "stopped",
-        device_control_spi_channel_select_name(status->channel_select_mask),
-        device_control_spi_capture_name(status->capture),
-        (unsigned int)status->spi_mode,
-        (unsigned long)status->timeout_us,
-        (unsigned long)status->packets_emitted,
-        (unsigned long)status->transactions_emitted,
-        (unsigned long)status->overrun_count,
-        (unsigned long)status->timeout_close_count
-    ) > 0;
+    return device_control_snprintf_complete(
+        snprintf(
+            buffer,
+            capacity,
+            "spimon bus%lu %s select=%s capture=%s mode=%u timeout_us=%lu packets=%lu txns=%lu overruns=%lu timeout_closes=%lu",
+            (unsigned long)bus,
+            status->running ? "running" : "stopped",
+            device_control_spi_channel_select_name(status->channel_select_mask),
+            device_control_spi_capture_name(status->capture),
+            (unsigned int)status->spi_mode,
+            (unsigned long)status->timeout_us,
+            (unsigned long)status->packets_emitted,
+            (unsigned long)status->transactions_emitted,
+            (unsigned long)status->overrun_count,
+            (unsigned long)status->timeout_close_count
+        ),
+        capacity
+    );
 }
 
 uint8_t device_control_encode_spi_all_status_payload(const spi_monitor_channel_status_t *status, uint32_t status_count, uint8_t *payload, uint32_t capacity) {
